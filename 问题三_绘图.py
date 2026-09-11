@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -17,6 +18,7 @@ from matplotlib.ticker import ScalarFormatter
 PROJECT_ROOT = Path(__file__).resolve().parent
 BOUNDARY_FILE = PROJECT_ROOT / "附件" / "附件1.xlsx"
 RESULT_FILE = PROJECT_ROOT / "附件" / "附件3" / "result3.xlsx"
+DIAGNOSTICS_FILE = PROJECT_ROOT / "附件" / "附件3" / "result3_diagnostics.json"
 FIGURE_DIR = PROJECT_ROOT / "figures" / "问题三"
 CRITICAL_MOISTURE = 0.15
 
@@ -45,6 +47,28 @@ def read_result() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return times_h, radius_cm, moisture
 
 
+def threshold_times_from_output(
+    times_h: np.ndarray,
+    maximum_moisture: np.ndarray,
+    threshold: float = CRITICAL_MOISTURE,
+) -> tuple[float, float]:
+    """由 60 s 输出记录返回线性交点估计与首次严格达标记录。"""
+    indices = np.flatnonzero(maximum_moisture < threshold)
+    if len(indices) == 0:
+        raise ValueError("输出记录内没有严格低于阈值的时刻。")
+    index = int(indices[0])
+    if index == 0:
+        raise ValueError("首条输出已经低于阈值，无法夹逼交点。")
+    previous_value = float(maximum_moisture[index - 1])
+    current_value = float(maximum_moisture[index])
+    if previous_value < threshold:
+        raise ValueError("首次达标记录之前的数值未形成阈值夹逼。")
+    crossing = float(times_h[index - 1]) + (
+        (previous_value - threshold) / (previous_value - current_value)
+    ) * float(times_h[index] - times_h[index - 1])
+    return crossing, float(times_h[index])
+
+
 def save_figure(figure: plt.Figure, name: str) -> None:
     FIGURE_DIR.mkdir(parents=True, exist_ok=True)
     figure.savefig(FIGURE_DIR / f"{name}.png", dpi=300, bbox_inches="tight")
@@ -58,7 +82,9 @@ def main() -> None:
     center_moisture = moisture[:, 0]
     surface_moisture = moisture[:, -1]
     threshold_index = int(np.flatnonzero(maximum_moisture < CRITICAL_MOISTURE)[0])
-    threshold_time = times[threshold_index]
+    continuous_threshold_time, discrete_threshold_time = threshold_times_from_output(
+        times, maximum_moisture
+    )
 
     # 1. 附件一原始边界
     figure, axis_temperature = plt.subplots(figsize=(7.2, 4.2))
@@ -108,13 +134,17 @@ def main() -> None:
     # 4. 每隔 6 h 的径向剖面
     # 只选取少量具有代表性的时刻，避免 90 余条曲线和图例相互遮挡。
     selected_hours = np.array(
-        [6.0, 12.0, 24.0, 36.0, 48.0, 54.0, threshold_time]
+        [6.0, 12.0, 24.0, 36.0, 48.0, 54.0, discrete_threshold_time]
     )
     selected_hours = selected_hours[selected_hours <= times[-1] + 1.0e-9]
     selected_indices = [int(np.argmin(np.abs(times - h))) for h in selected_hours]
     figure, axis = plt.subplots(figsize=(7.2, 4.2))
     for index in selected_indices:
-        axis.plot(radius_cm, moisture[index], label=f"{times[index]:.0f} h")
+        if index == threshold_index:
+            label = f"{times[index]:.4f} h（首次离散达标）"
+        else:
+            label = f"{times[index]:.0f} h"
+        axis.plot(radius_cm, moisture[index], label=label)
     axis.axhline(CRITICAL_MOISTURE, color="black", ls="--", lw=1.0, label="阈值 0.15")
     axis.set(xlabel="到药材中心的距离 / cm", ylabel="含水率 / kg·kg$^{-1}$", title="含水率径向剖面")
     axis.grid(alpha=0.25)
@@ -126,7 +156,18 @@ def main() -> None:
     axis.plot(times, center_moisture, label="中心", color="#d62728")
     axis.plot(times, surface_moisture, label="表面", color="#1f77b4")
     axis.axhline(CRITICAL_MOISTURE, color="black", ls="--", label="阈值 0.15")
-    axis.axvline(threshold_time, color="#555555", ls=":", label=f"首次离散达标 {threshold_time:.2f} h")
+    axis.axvline(
+        continuous_threshold_time,
+        color="#ff7f0e",
+        ls="-.",
+        label=f"线性交点估计 t*={continuous_threshold_time:.4f} h",
+    )
+    axis.axvline(
+        discrete_threshold_time,
+        color="#555555",
+        ls=":",
+        label=f"首次 60 s 达标 t60={discrete_threshold_time:.4f} h",
+    )
     axis.set(xlabel="时间 / h", ylabel="含水率 / kg·kg$^{-1}$", title="中心与表面含水率演化")
     axis.grid(alpha=0.25)
     axis.legend()
@@ -149,7 +190,18 @@ def main() -> None:
     figure, axis = plt.subplots(figsize=(7.2, 4.2))
     axis.plot(times, maximum_moisture, color="#2c3e50")
     axis.axhline(CRITICAL_MOISTURE, color="#d62728", ls="--", label="阈值 0.15")
-    axis.axvline(threshold_time, color="#555555", ls=":", label=f"首次离散达标 {threshold_time:.2f} h")
+    axis.axvline(
+        continuous_threshold_time,
+        color="#ff7f0e",
+        ls="-.",
+        label=f"t*={continuous_threshold_time:.4f} h",
+    )
+    axis.axvline(
+        discrete_threshold_time,
+        color="#555555",
+        ls=":",
+        label=f"t60={discrete_threshold_time:.4f} h",
+    )
     axis.set(xlabel="时间 / h", ylabel="全域最大含水率 / kg·kg$^{-1}$", title="全域最大含水率下降曲线")
     axis.grid(alpha=0.25)
     axis.legend()
@@ -163,7 +215,7 @@ def main() -> None:
         cmap="YlOrRd", vmin=CRITICAL_MOISTURE, vmax=float(moisture.max()),
     )
     figure.colorbar(image, ax=axis, label="含水率 / kg·kg$^{-1}$")
-    axis.axvline(threshold_time, color="black", ls="--", lw=1.0)
+    axis.axvline(discrete_threshold_time, color="black", ls="--", lw=1.0)
     axis.set(xlabel="时间 / h", ylabel="到药材中心的距离 / cm", title="含水率时空分布")
     save_figure(figure, "含水率时空分布")
 
@@ -174,13 +226,68 @@ def main() -> None:
     axis.plot(times[left:right + 1], maximum_moisture[left:right + 1], "o-", ms=3,
               color="#2c3e50")
     axis.axhline(CRITICAL_MOISTURE, color="#d62728", ls="--")
-    axis.axvline(threshold_time, color="#555555", ls=":")
+    axis.axvline(
+        continuous_threshold_time,
+        color="#ff7f0e",
+        ls="-.",
+        label=f"线性交点估计 t*={continuous_threshold_time:.4f} h",
+    )
+    axis.axvline(
+        discrete_threshold_time,
+        color="#555555",
+        ls=":",
+        label=f"首次 60 s 达标 t60={discrete_threshold_time:.4f} h",
+    )
     formatter = ScalarFormatter(useOffset=False)
     formatter.set_scientific(False)
     axis.yaxis.set_major_formatter(formatter)
     axis.set(xlabel="时间 / h", ylabel="全域最大含水率 / kg·kg$^{-1}$", title="达标时间阈值判定局部图")
     axis.grid(alpha=0.25)
+    axis.legend(fontsize=8)
     save_figure(figure, "达标时间阈值判定")
+
+    # 10. 已复算边界情景的达标时间比较
+    if DIAGNOSTICS_FILE.exists():
+        with DIAGNOSTICS_FILE.open("r", encoding="utf-8") as stream:
+            diagnostics = json.load(stream)
+        cases = [diagnostics["baseline"], *diagnostics["boundary_scenarios"]]
+        labels = [case["label"] for case in cases]
+        values = [case["continuous_threshold_time_h"] for case in cases]
+        offsets_minutes = [(value - values[0]) * 60.0 for value in values]
+        figure, axis = plt.subplots(figsize=(7.2, 4.6))
+        positions = np.arange(len(cases))
+        colors = ["#2c3e50", *["#1f77b4"] * (len(cases) - 1)]
+        bars = axis.barh(positions, offsets_minutes, color=colors)
+        axis.axvline(0.0, color="black", lw=0.8)
+        axis.set_yticks(positions, labels)
+        axis.invert_yaxis()
+        axis.set(
+            xlabel="相对基准情景的 t* 变化 / min",
+            title="长期边界情景敏感性（非置信区间）",
+        )
+        axis.set_xlim(min(offsets_minutes) - 4.0, max(offsets_minutes) + 3.0)
+        axis.grid(axis="x", alpha=0.25)
+        for bar, value in zip(bars, offsets_minutes):
+            if abs(value) >= 3.0:
+                axis.text(
+                    value / 2.0,
+                    bar.get_y() + bar.get_height() / 2.0,
+                    f"{value:.2f} min",
+                    ha="center",
+                    va="center",
+                    color="white",
+                    fontsize=8,
+                )
+            else:
+                axis.text(
+                    value + (0.35 if value >= 0 else -0.35),
+                    bar.get_y() + bar.get_height() / 2.0,
+                    f"{value:.2f} min",
+                    ha="left" if value >= 0 else "right",
+                    va="center",
+                    fontsize=8,
+                )
+        save_figure(figure, "长期边界情景敏感性")
 
     print(f"已生成 {len(list(FIGURE_DIR.glob('*.png')))} 张 PNG 图：{FIGURE_DIR}")
 
