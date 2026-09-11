@@ -16,17 +16,10 @@ import numpy as np
 from openpyxl import load_workbook
 
 
-# ============================================================
-# 一、文件路径
-# ============================================================
-
-INPUT_FILE = Path("附件/附件1.xlsx")
-OUTPUT_FILE = Path("附件/附件3/result1.xlsx")
-
-
-# ============================================================
-# 二、题面给定的物理参数
-# ============================================================
+# 路径以脚本所在目录为基准
+PROJECT_ROOT = Path(__file__).resolve().parent
+INPUT_FILE = PROJECT_ROOT / "附件" / "附件1.xlsx"
+OUTPUT_FILE = PROJECT_ROOT / "附件" / "附件3" / "result1.xlsx"
 
 # 药材物性
 PELLET_RADIUS = 0.02            # 药材半径，单位 m
@@ -48,11 +41,6 @@ CONVERGENCE_TOL = 1.0e-10       # Picard 迭代的相对误差容差
 MAX_ITERATIONS = 30             # Picard 迭代次数上限
 
 
-# ============================================================
-# 三、数据结构
-# ============================================================
-
-
 class DryingRoomBoundary(NamedTuple):
     """附件一给出的烘房侧边界时间序列。"""
 
@@ -72,11 +60,6 @@ class RadialGrid(NamedTuple):
     nodes: np.ndarray
     interfaces: np.ndarray
     area_factors: np.ndarray
-
-
-# ============================================================
-# 四、输入读取与物性关系
-# ============================================================
 
 
 def read_drying_boundary(path: Path) -> DryingRoomBoundary:
@@ -111,11 +94,6 @@ def moisture_diffusivity(moisture: np.ndarray) -> np.ndarray:
     """水分扩散系数 D(C)，单位 m^2/s。"""
     safe_moisture = np.maximum(moisture, 1.0e-12)
     return 7.0e-9 * np.exp(-0.89 / safe_moisture)
-
-
-# ============================================================
-# 五、数值内核
-# ============================================================
 
 
 def solve_tridiagonal(
@@ -268,11 +246,6 @@ def advance_moisture(
     raise RuntimeError(
         f"含水率Picard迭代未收敛，最后相对误差为{rel_error:.3e}。"
     )
-
-
-# ============================================================
-# 六、求解主流程与结果输出
-# ============================================================
 
 
 def solve_problem_one() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:

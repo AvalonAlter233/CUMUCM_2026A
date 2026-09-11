@@ -1,36 +1,41 @@
 """问题二绘图脚本。
 
 输入：附件/附件1.xlsx、附件/附件3/result2.xlsx
-输出：figures/问题二/ 下的 PNG 图像
+输出：figures/问题二/ 下的 9 张 PNG 图片（中文文件名）
 
-绘图脚本不写死数值，所有图均从当前附件和 result2.xlsx 重新读取生成。
+脚本不写死数值，所有图均由当前附件和 result2.xlsx 现场读取生成。
 """
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
+import matplotlib.font_manager as font_manager
 import matplotlib.pyplot as plt
 import numpy as np
 from openpyxl import load_workbook
 
 
+# 路径一律以脚本所在目录为基准，换电脑或换工作目录都不用改代码
 PROJECT_ROOT = Path(__file__).resolve().parent
 BOUNDARY_FILE = PROJECT_ROOT / "附件" / "附件1.xlsx"
 RESULT_FILE = PROJECT_ROOT / "附件" / "附件3" / "result2.xlsx"
 FIGURE_DIR = PROJECT_ROOT / "figures" / "问题二"
 
-FIGURE_TOOL_DIR = Path(
-    r"C:\Users\Lenovo\.codex\skills\math-modeling-skill\tools\figure\scripts"
-)
-sys.path.insert(0, str(FIGURE_TOOL_DIR))
-from export_figure import export_figure  # noqa: E402
-
+# 中文字体候选，按顺序取本机第一个已安装的，换系统后不会出现方框字
+CJK_FONT_CANDIDATES = [
+    "Microsoft YaHei", "SimHei", "SimSun", "Arial Unicode MS",      # Windows
+    "PingFang SC", "Heiti SC", "STHeiti",                           # macOS
+    "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Zen Hei",  # Linux
+]
+INSTALLED_FONTS = {font.name for font in font_manager.fontManager.ttflist}
+AVAILABLE_CJK_FONTS = [name for name in CJK_FONT_CANDIDATES if name in INSTALLED_FONTS]
+if not AVAILABLE_CJK_FONTS:
+    print("提示：本机未检测到中文字体，图中中文可能显示为方框，请先安装中文字体。")
 
 plt.rcParams.update({
     "font.family": "sans-serif",
-    "font.sans-serif": ["Microsoft YaHei", "SimHei", "SimSun", "Arial Unicode MS"],
+    "font.sans-serif": AVAILABLE_CJK_FONTS + ["DejaVu Sans"],
     "axes.unicode_minus": False,
     "font.size": 9,
     "axes.titlesize": 10,
@@ -41,8 +46,13 @@ plt.rcParams.update({
     "figure.dpi": 120,
 })
 
+EXPORT_DPI = 300    # PNG 导出分辨率
+PAD_INCHES = 0.05   # 裁边后保留的留白，单位英寸
 
+# 全场时间序列图的取样时刻，单位 s
 PLOT_TIMES = [1800, 3600, 5400, 7200, 9000, 10800]
+
+# 径向剖面图的取样时刻及其配色，两者一一对应
 PROFILE_TIMES = [1800, 5400, 9000, 10800]
 PROFILE_COLORS = ["#31688e", "#35b779", "#fde725", "#d73027"]
 
@@ -77,15 +87,14 @@ def read_result() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
 
 
 def export_png(figure, filename: str, size_inches: tuple[float, float]) -> None:
-    """统一导出 300 DPI PNG；按用户要求不生成 SVG、PDF 和灰度副本。"""
+    """按固定物理尺寸导出 300 DPI PNG 并关闭图形，只生成 PNG。"""
     FIGURE_DIR.mkdir(parents=True, exist_ok=True)
-    export_figure(
-        figure,
-        str(FIGURE_DIR / filename),
-        formats=["png"],
-        dpi=300,
-        size_inches=size_inches,
-        grayscale_preview=False,
+    figure.set_size_inches(*size_inches)
+    figure.savefig(
+        FIGURE_DIR / filename,
+        dpi=EXPORT_DPI,
+        bbox_inches="tight",
+        pad_inches=PAD_INCHES,
     )
     plt.close(figure)
 
@@ -108,7 +117,7 @@ def draw_raw_data(boundary_time, room_temperature, room_moisture) -> None:
     axes[1].set_title("0–3 h 烘房水分边界")
     for axis in axes:
         axis.grid(alpha=0.25)
-    export_png(figure, "raw_q2_烘房边界", (7.0, 3.1))
+    export_png(figure, "图1_烘房温度与水分边界.png", (7.0, 3.1))
 
     figure, axis = plt.subplots(figsize=(5.2, 3.2))
     intervals = np.diff(boundary_time[mask])
@@ -119,7 +128,7 @@ def draw_raw_data(boundary_time, room_temperature, room_moisture) -> None:
     axis.set_title("问题二边界数据采样间隔")
     axis.set_xticks(values)
     axis.grid(axis="y", alpha=0.25)
-    export_png(figure, "raw_q2_边界采样间隔", (5.2, 3.2))
+    export_png(figure, "图2_边界采样间隔.png", (5.2, 3.2))
 
     figure, axes = plt.subplots(1, 2, figsize=(7.0, 3.1), constrained_layout=True)
     axes[0].plot(time_hours[1:], np.diff(temperature) / np.diff(time_hours),
@@ -134,7 +143,7 @@ def draw_raw_data(boundary_time, room_temperature, room_moisture) -> None:
     axes[1].set_title("烘房水分浓度变化率")
     for axis in axes:
         axis.grid(alpha=0.25)
-    export_png(figure, "raw_q2_边界变化率", (7.0, 3.1))
+    export_png(figure, "图3_边界变化率.png", (7.0, 3.1))
 
 
 def draw_process_profiles(times, radius_cm, temperature_field, moisture_field) -> None:
@@ -149,7 +158,7 @@ def draw_process_profiles(times, radius_cm, temperature_field, moisture_field) -
     axis.set_title("问题二变物性模型的径向温度剖面")
     axis.legend(frameon=False, ncol=2)
     axis.grid(alpha=0.25)
-    export_png(figure, "process_q2_温度径向剖面", (6.4, 4.2))
+    export_png(figure, "图4_温度径向剖面.png", (6.4, 4.2))
 
     figure, axis = plt.subplots(figsize=(6.4, 4.2))
     for color, seconds in zip(PROFILE_COLORS, PROFILE_TIMES):
@@ -161,7 +170,7 @@ def draw_process_profiles(times, radius_cm, temperature_field, moisture_field) -
     axis.set_title("问题二变物性模型的径向含水率剖面")
     axis.legend(frameon=False, ncol=2)
     axis.grid(alpha=0.25)
-    export_png(figure, "process_q2_含水率径向剖面", (6.4, 4.2))
+    export_png(figure, "图5_含水率径向剖面.png", (6.4, 4.2))
 
     figure, axes = plt.subplots(1, 2, figsize=(7.0, 3.2), constrained_layout=True)
     axes[0].plot(times / 3600.0, temperature_field[:, 0],
@@ -181,7 +190,7 @@ def draw_process_profiles(times, radius_cm, temperature_field, moisture_field) -
     for axis in axes:
         axis.legend(frameon=False)
         axis.grid(alpha=0.25)
-    export_png(figure, "process_q2_中心表面轨迹", (7.0, 3.2))
+    export_png(figure, "图6_中心与表面轨迹.png", (7.0, 3.2))
 
 
 def draw_final_results(times, radius_cm, temperature_field, moisture_field) -> None:
@@ -195,7 +204,7 @@ def draw_final_results(times, radius_cm, temperature_field, moisture_field) -> N
     axis.set_ylabel("时间 / h")
     axis.set_title("问题二温度场时空分布")
     figure.colorbar(image, ax=axis, label="温度 / °C")
-    export_png(figure, "result_q2_温度场热力图", (6.4, 4.2))
+    export_png(figure, "图7_温度场时空分布.png", (6.4, 4.2))
 
     figure, axis = plt.subplots(figsize=(6.4, 4.2))
     image = axis.pcolormesh(
@@ -206,7 +215,7 @@ def draw_final_results(times, radius_cm, temperature_field, moisture_field) -> N
     axis.set_ylabel("时间 / h")
     axis.set_title("问题二含水率场时空分布")
     figure.colorbar(image, ax=axis, label="干基含水率 / kg/kg")
-    export_png(figure, "result_q2_含水率场热力图", (6.4, 4.2))
+    export_png(figure, "图8_含水率场时空分布.png", (6.4, 4.2))
 
     figure, axes = plt.subplots(1, 2, figsize=(7.0, 3.2), constrained_layout=True)
     temperature_gap = temperature_field[:, -1] - temperature_field[:, 0]
@@ -223,7 +232,7 @@ def draw_final_results(times, radius_cm, temperature_field, moisture_field) -> N
     axes[1].set_title("含水率空间非均匀性")
     for axis in axes:
         axis.grid(alpha=0.25)
-    export_png(figure, "result_q2_空间非均匀性", (7.0, 3.2))
+    export_png(figure, "图9_空间非均匀性.png", (7.0, 3.2))
 
 
 def main() -> None:
