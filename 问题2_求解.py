@@ -20,12 +20,10 @@ import numpy as np
 from openpyxl import load_workbook
 
 
-# ============================================================
-# 一、文件路径与计算参数
-# ============================================================
-
-INPUT_FILE = Path("附件/附件1.xlsx")
-OUTPUT_FILE = Path("附件/附件3/result2.xlsx")
+# 路径以脚本所在目录为基准，换电脑或换工作目录都不用改代码
+PROJECT_ROOT = Path(__file__).resolve().parent
+INPUT_FILE = PROJECT_ROOT / "附件" / "附件1.xlsx"
+OUTPUT_FILE = PROJECT_ROOT / "附件" / "附件3" / "result2.xlsx"
 
 # 药材几何和边界传递参数
 PELLET_RADIUS = 0.02             # 药材半径，单位 m
@@ -45,11 +43,6 @@ MAX_ITERATIONS = 60               # 单个时间步最大迭代次数
 RELAXATION_FACTOR = 0.8           # 欠松弛因子，改善变物性耦合的收敛性
 
 
-# ============================================================
-# 二、数据结构
-# ============================================================
-
-
 class DryingRoomBoundary(NamedTuple):
     """附件一给出的烘房侧边界时间序列。"""
 
@@ -64,11 +57,6 @@ class RadialGrid(NamedTuple):
     nodes: np.ndarray              # 节点半径，共 RADIAL_INTERVALS + 1 个
     interfaces: np.ndarray         # 相邻节点中点半径
     area_factors: np.ndarray       # 控制体径向面积因子
-
-
-# ============================================================
-# 三、输入读取与边界插值
-# ============================================================
 
 
 def read_drying_boundary(path: Path) -> DryingRoomBoundary:
@@ -109,11 +97,6 @@ def linear_interp(t: float, times: np.ndarray, values: np.ndarray) -> float:
     return float(np.interp(t, times, values))
 
 
-# ============================================================
-# 四、附录3变物性关系
-# ============================================================
-
-
 def density(moisture: np.ndarray) -> np.ndarray:
     """附录3密度关系，单位 kg/m^3。"""
     return 650.0 + 128.0 * moisture
@@ -151,11 +134,6 @@ def harmonic_mean(left: np.ndarray, right: np.ndarray) -> np.ndarray:
     """计算相邻控制体之间的调和平均传输系数。"""
     denominator = np.maximum(left + right, 1.0e-30)
     return 2.0 * left * right / denominator
-
-
-# ============================================================
-# 五、有限体积离散工具
-# ============================================================
 
 
 def build_radial_grid(intervals: int) -> RadialGrid:
@@ -318,11 +296,6 @@ def advance_moisture(
     return solve_tridiagonal(*system)
 
 
-# ============================================================
-# 六、热湿耦合求解
-# ============================================================
-
-
 def solve_problem_two(
     end_time: float = END_TIME,
     time_step: float = TIME_STEP,
@@ -439,11 +412,6 @@ def solve_problem_two(
         np.asarray(moisture_field),
         diagnostics,
     )
-
-
-# ============================================================
-# 七、结果表输出
-# ============================================================
 
 
 def write_result_workbook(

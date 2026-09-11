@@ -1,46 +1,41 @@
 """问题一绘图脚本。
 
-运行位置：项目根目录
 输入：附件/附件1.xlsx、附件/附件3/result1.xlsx
-输出：figures/问题一/ 下的 PNG 图片
+输出：figures/问题一/ 下的 9 张 PNG 图片（中文文件名）
 
-脚本不把数据写死在代码中，所有曲线和热力图均由当前结果文件重新读取生成。
+所有曲线和热力图都由结果文件现场读取生成，脚本内不写死任何数值。
 """
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
+import matplotlib.font_manager as font_manager
 import matplotlib.pyplot as plt
 import numpy as np
 from openpyxl import load_workbook
 
 
-# ============================================================
-# 一、输入输出路径与外部绘图工具
-# ============================================================
-
+# 路径一律以脚本所在目录为基准，换电脑或换工作目录都不用改代码
 PROJECT_ROOT = Path(__file__).resolve().parent
 ATTACHMENT_ONE = PROJECT_ROOT / "附件" / "附件1.xlsx"
 RESULT_ONE = PROJECT_ROOT / "附件" / "附件3" / "result1.xlsx"
 FIGURE_DIR = PROJECT_ROOT / "figures" / "问题一"
 
-# 统一导出工具（多格式、固定尺寸、灰度预览），从技能目录动态载入
-FIGURE_TOOL_DIR = Path(
-    r"C:\Users\Lenovo\.codex\skills\math-modeling-skill\tools\figure\scripts"
-)
-sys.path.insert(0, str(FIGURE_TOOL_DIR))
-from export_figure import export_figure  # noqa: E402
-
-
-# ============================================================
-# 二、全局绘图风格与配色
-# ============================================================
+# 中文字体候选，按顺序取本机第一个已安装的，换系统后不会出现方框字
+CJK_FONT_CANDIDATES = [
+    "Microsoft YaHei", "SimHei", "SimSun", "Arial Unicode MS",      # Windows
+    "PingFang SC", "Heiti SC", "STHeiti",                           # macOS
+    "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Zen Hei",  # Linux
+]
+INSTALLED_FONTS = {font.name for font in font_manager.fontManager.ttflist}
+AVAILABLE_CJK_FONTS = [name for name in CJK_FONT_CANDIDATES if name in INSTALLED_FONTS]
+if not AVAILABLE_CJK_FONTS:
+    print("提示：本机未检测到中文字体，图中中文可能显示为方框，请先安装中文字体。")
 
 plt.rcParams.update({
     "font.family": "sans-serif",
-    "font.sans-serif": ["Microsoft YaHei", "SimHei", "SimSun", "Arial Unicode MS"],
+    "font.sans-serif": AVAILABLE_CJK_FONTS + ["DejaVu Sans"],
     "axes.unicode_minus": False,
     "font.size": 9,
     "axes.titlesize": 10,
@@ -54,13 +49,12 @@ plt.rcParams.update({
 # 径向剖面图的取样时刻，单位 s
 SNAPSHOT_TIMES = [100, 600, 1200, 1800]
 
-# 论文表格取值时刻，单位 s（当前绘图脚本未使用，供论文制表参考）
+# 论文表格取值时刻，单位 s（绘图脚本未使用，供正文制表参考）
 PAPER_TABLE_TIMES = [100, 300, 600, 900, 1200, 1500, 1800]
 
 # 剖面曲线配色，与 SNAPSHOT_TIMES 一一对应
 PROFILE_COLORS = ["#31688e", "#35b779", "#fde725", "#d73027"]
 
-# 通用强调色
 COLOR_COOL = "#31688e"    # 冷色强调（蓝）
 COLOR_WARM = "#d73027"    # 暖色强调（红）
 COLOR_BAR = "#7e9fbe"     # 柱状图填充色
@@ -72,15 +66,8 @@ PROFILE_SIZE = (6.4, 4.2)     # 径向剖面图
 HEATMAP_SIZE = (6.4, 4.2)     # 时空热力图
 WIDE_SIZE = (7.0, 3.2)        # 并排双子图
 
-# PNG 导出分辨率与裁边留白（英寸）。留白显式取 0.1：export_figure 的灰度预览
-# 分支会用 rcParams 默认的 0.1 重存一次 PNG，取同一个值才能与既往图片逐字节一致。
-EXPORT_DPI = 300
-PAD_INCHES = 0.1
-
-
-# ============================================================
-# 三、绘图基础件
-# ============================================================
+EXPORT_DPI = 300              # PNG 导出分辨率
+PAD_INCHES = 0.1              # 裁边后保留的留白，单位英寸
 
 
 def new_axes(
@@ -108,14 +95,17 @@ def save_figure(
     filename: str,
     size: tuple[float, float] = PROFILE_SIZE,
 ) -> None:
-    """按统一尺寸导出 PNG，并关闭图形。"""
+    """按固定物理尺寸导出 300 DPI PNG，并关闭图形。
+
+    用 bbox_inches="tight" 裁掉多余留白，导出尺寸与 size 基本一致，
+    图片可直接贴进论文，无需二次缩放。
+    """
     FIGURE_DIR.mkdir(parents=True, exist_ok=True)
-    export_figure(
-        fig,
-        str(FIGURE_DIR / filename),
-        formats=["png"],
+    fig.set_size_inches(*size)
+    fig.savefig(
+        FIGURE_DIR / filename,
         dpi=EXPORT_DPI,
-        size_inches=size,
+        bbox_inches="tight",
         pad_inches=PAD_INCHES,
     )
     plt.close(fig)
@@ -137,11 +127,6 @@ def plot_profiles(ax, times: np.ndarray, radii: np.ndarray, field: np.ndarray) -
             label=f"{t} s",
         )
     ax.legend(frameon=False, ncol=2)
-
-
-# ============================================================
-# 四、数据读取
-# ============================================================
 
 
 def read_boundary_data() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -182,11 +167,6 @@ def read_problem_one_result() -> tuple[
     return times, radii, temperature_field, moisture_field
 
 
-# ============================================================
-# 五、成图
-# ============================================================
-
-
 def plot_raw_data(
     boundary_times: np.ndarray,
     drying_temperature: np.ndarray,
@@ -200,7 +180,7 @@ def plot_raw_data(
         size=RAW_SIZE,
     )
     ax.plot(boundary_times / 3600, drying_temperature, color=COLOR_COOL, linewidth=1.8)
-    save_figure(fig, "raw_q1_烘房温度", size=RAW_SIZE)
+    save_figure(fig, "图1_附件一烘房温度曲线.png", size=RAW_SIZE)
 
     fig, ax = new_axes(
         "烘房水分浓度边界随时间的变化",
@@ -209,7 +189,7 @@ def plot_raw_data(
         size=RAW_SIZE,
     )
     ax.plot(boundary_times / 3600, drying_moisture, color=COLOR_WARM, linewidth=1.8)
-    save_figure(fig, "raw_q1_烘房水分浓度", size=RAW_SIZE)
+    save_figure(fig, "图2_附件一烘房水分浓度曲线.png", size=RAW_SIZE)
 
     fig, ax = new_axes(
         "附件一边界数据的采样间隔",
@@ -227,7 +207,7 @@ def plot_raw_data(
         color=COLOR_BAR,
     )
     ax.set_xticks(unique_intervals)
-    save_figure(fig, "raw_q1_边界采样间隔", size=SAMPLING_SIZE)
+    save_figure(fig, "图3_附件一边界采样间隔.png", size=SAMPLING_SIZE)
 
 
 def plot_process(
@@ -244,7 +224,7 @@ def plot_process(
         size=PROFILE_SIZE,
     )
     plot_profiles(ax, times, radii, temperature_field)
-    save_figure(fig, "process_q1_温度径向剖面", size=PROFILE_SIZE)
+    save_figure(fig, "图4_温度径向剖面.png", size=PROFILE_SIZE)
 
     fig, ax = new_axes(
         "不同时间的药材径向含水率剖面",
@@ -253,7 +233,7 @@ def plot_process(
         size=PROFILE_SIZE,
     )
     plot_profiles(ax, times, radii, moisture_field)
-    save_figure(fig, "process_q1_水分径向剖面", size=PROFILE_SIZE)
+    save_figure(fig, "图5_水分径向剖面.png", size=PROFILE_SIZE)
 
     fig, axes = plt.subplots(1, 2, figsize=WIDE_SIZE, constrained_layout=True)
     for ax, field, ylabel, title in [
@@ -267,7 +247,7 @@ def plot_process(
         ax.set_title(title)
         ax.legend(frameon=False)
         ax.grid(alpha=0.25)
-    save_figure(fig, "process_q1_中心表面轨迹", size=WIDE_SIZE)
+    save_figure(fig, "图6_中心与表面轨迹.png", size=WIDE_SIZE)
 
 
 def plot_results(
@@ -286,7 +266,7 @@ def plot_results(
     )
     mesh = ax.pcolormesh(radii, times, temperature_field, shading="auto", cmap="magma")
     fig.colorbar(mesh, ax=ax, label="温度 / °C")
-    save_figure(fig, "result_q1_温度场热力图", size=HEATMAP_SIZE)
+    save_figure(fig, "图7_温度场时空分布.png", size=HEATMAP_SIZE)
 
     fig, ax = new_axes(
         "问题一含水率场时空分布",
@@ -297,7 +277,7 @@ def plot_results(
     )
     mesh = ax.pcolormesh(radii, times, moisture_field, shading="auto", cmap="viridis")
     fig.colorbar(mesh, ax=ax, label="干基含水率 / kg/kg")
-    save_figure(fig, "result_q1_水分场热力图", size=HEATMAP_SIZE)
+    save_figure(fig, "图8_水分场时空分布.png", size=HEATMAP_SIZE)
 
     fig, axes = plt.subplots(1, 2, figsize=WIDE_SIZE, constrained_layout=True)
     for ax, curve, color, ylabel, title in [
@@ -321,7 +301,7 @@ def plot_results(
         ax.set_ylabel(ylabel)
         ax.set_title(title)
         ax.grid(alpha=0.25)
-    save_figure(fig, "result_q1_中心表面差值", size=WIDE_SIZE)
+    save_figure(fig, "图9_空间非均匀性.png", size=WIDE_SIZE)
 
 
 def main() -> None:
