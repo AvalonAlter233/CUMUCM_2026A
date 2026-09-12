@@ -19,6 +19,31 @@ def test_result_reader_and_threshold_detection_match_workbook():
     assert discrete == pytest.approx(51.11666666666667)
 
 
+def test_internal_field_reader_returns_saved_reference_grid(tmp_path):
+    path = tmp_path / "internal_field.npz"
+    np.savez_compressed(
+        path,
+        times_s=np.array([60.0, 120.0]),
+        xi_centers=np.array([0.25, 0.75]),
+        moisture=np.array([[2.0, 1.0], [1.8, 0.8]]),
+        surface_radii_m=np.array([0.019, 0.018]),
+    )
+    times_h, xi, moisture, radii_cm = plotting.read_internal_field(path)
+    np.testing.assert_allclose(times_h, [1.0 / 60.0, 2.0 / 60.0])
+    np.testing.assert_allclose(xi, [0.25, 0.75])
+    np.testing.assert_allclose(moisture, [[2.0, 1.0], [1.8, 0.8]])
+    np.testing.assert_allclose(radii_cm, [1.9, 1.8])
+
+
+def test_incomplete_diagnostics_do_not_produce_mechanism_plot():
+    diagnostics = {
+        "verification_complete": False,
+        "baseline": {"name": "appendix4_moving_radius"},
+        "mechanism_comparison": [{"name": "stale_case"}],
+    }
+    assert plotting.verified_mechanism_cases(diagnostics) == []
+
+
 def test_plotting_main_generates_seven_nonempty_figures(tmp_path, monkeypatch):
     monkeypatch.setattr(plotting, "FIGURE_DIR", Path(tmp_path))
     plotting.main()

@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
 import numpy as np
 from openpyxl import load_workbook
@@ -17,6 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 RADIUS_FILE = PROJECT_ROOT / "附件" / "附件2.xlsx"
 OUTPUT_FILE = PROJECT_ROOT / "附件" / "附件3" / "result4.xlsx"
 DIAGNOSTICS_FILE = PROJECT_ROOT / "附件" / "附件3" / "result4_diagnostics.json"
+INTERNAL_FIELD_FILE = PROJECT_ROOT / "附件" / "附件3" / "result4_internal_field.npz"
 
 INITIAL_RADIUS = 0.02
 CONVECTIVE_HEAT_COEFF = 25.0
@@ -49,6 +50,24 @@ class ReferenceGrid(NamedTuple):
     centers: np.ndarray
     volumes: np.ndarray
     spacing: float
+
+
+class MaterialProperties(NamedTuple):
+    """一组与含水率、温度配套的热湿物性函数。"""
+
+    density: Callable[[np.ndarray], np.ndarray]
+    heat_capacity: Callable[[np.ndarray], np.ndarray]
+    thermal_conductivity: Callable[[np.ndarray], np.ndarray]
+    moisture_diffusivity: Callable[[np.ndarray, np.ndarray], np.ndarray]
+
+
+class InternalFieldData(NamedTuple):
+    """供绘图使用的内部参考域单元中心结果。"""
+
+    times: np.ndarray
+    xi_centers: np.ndarray
+    moisture: np.ndarray
+    surface_radii: np.ndarray
 
 
 def read_radius_history(path: Path) -> RadiusHistory:
@@ -108,6 +127,22 @@ def moisture_diffusivity(
         * np.exp(-0.30 / safe_moisture)
         * np.exp(-3850.0 / temperature_kelvin)
     )
+
+
+def material_properties(name: str) -> MaterialProperties:
+    """返回附录三或附录四物性，供同一移动边界框架作机制对照。"""
+    if name == "appendix4":
+        return MaterialProperties(
+            density, heat_capacity, thermal_conductivity, moisture_diffusivity
+        )
+    if name == "appendix3":
+        return MaterialProperties(
+            problem3.density,
+            problem3.heat_capacity,
+            problem3.thermal_conductivity,
+            problem3.moisture_diffusivity,
+        )
+    raise ValueError("物性模型必须为 appendix3 或 appendix4。")
 
 
 def build_reference_grid(intervals: int) -> ReferenceGrid:
@@ -179,11 +214,13 @@ def advance_temperature(
     grid: ReferenceGrid,
     radius: float,
     time_step: float,
+    properties: MaterialProperties,
 ) -> np.ndarray:
     system = assemble_reference_system(
         old_temperature,
-        density(reference_moisture) * heat_capacity(reference_moisture),
-        thermal_conductivity(reference_moisture),
+        properties.density(reference_moisture)
+        * properties.heat_capacity(reference_moisture),
+        properties.thermal_conductivity(reference_moisture),
         CONVECTIVE_HEAT_COEFF,
         room_temperature,
         grid,
@@ -201,11 +238,14 @@ def advance_moisture(
     grid: ReferenceGrid,
     radius: float,
     time_step: float,
+    properties: MaterialProperties,
 ) -> np.ndarray:
     system = assemble_reference_system(
         old_moisture,
         np.ones_like(old_moisture),
-        moisture_diffusivity(reference_moisture, reference_temperature),
+        properties.moisture_diffusivity(
+            reference_moisture, reference_temperature
+        ),
         CONVECTIVE_MASS_COEFF,
         room_moisture,
         grid,
@@ -259,10 +299,19 @@ def solve_problem_four(
     max_time: float = MAX_SIMULATION_TIME,
     critical_moisture: float = CRITICAL_MOISTURE,
     moving_radius: bool = True,
+    property_model: str = "appendix4",
+    capture_internal: bool = False,
     boundary: problem3.DryingRoomBoundary | None = None,
     radius_history: RadiusHistory | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict]:
-    """求解附录四物性下的移动或固定半径干燥过程。"""
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    dict,
+    InternalFieldData | None,
+]:
+    """用指定物性求解移动或固定半径干燥过程。"""
     report_steps = int(round(report_interval / time_step))
     total_steps = int(round(max_time / time_step))
     if report_steps < 1 or not np.isclose(
@@ -278,6 +327,7 @@ def solve_problem_four(
         radius_history = read_radius_history(RADIUS_FILE)
 
     grid = build_reference_grid(internal_intervals)
+    properties = material_properties(property_model)
     output_nodes = template_output_nodes()
     temperature = np.full(internal_intervals, INITIAL_TEMPERATURE)
     moisture = np.full(internal_intervals, INITIAL_MOISTURE)
@@ -285,6 +335,7 @@ def solve_problem_four(
     output_times: list[float] = []
     output_moisture: list[np.ndarray] = []
     output_surface_radius: list[float] = []
+    internal_output_moisture: list[np.ndarray] = []
     iteration_counts: list[int] = []
     previous_time = 0.0
     previous_maximum = INITIAL_MOISTURE
@@ -320,6 +371,7 @@ def solve_problem_four(
                 grid,
                 radius,
                 time_step,
+                properties,
             )
             moisture_candidate = advance_moisture(
                 moisture,
@@ -329,6 +381,7 @@ def solve_problem_four(
                 grid,
                 radius,
                 time_step,
+                properties,
             )
             new_temperature = (
                 RELAXATION_FACTOR * temperature_candidate
@@ -366,7 +419,7 @@ def solve_problem_four(
         if not np.all(np.isfinite(moisture)) or np.min(moisture) <= 0.0:
             raise FloatingPointError(f"{current_time:.0f} s 含水率异常。")
 
-        diffusivity = moisture_diffusivity(moisture, temperature)
+        diffusivity = properties.moisture_diffusivity(moisture, temperature)
         last_diffusivity = max(float(diffusivity[-1]), 1.0e-30)
         effective_mass_transfer = 1.0 / (
             1.0 / CONVECTIVE_MASS_COEFF
@@ -430,6 +483,8 @@ def solve_problem_four(
             output_times.append(current_time)
             output_moisture.append(reconstructed.copy())
             output_surface_radius.append(radius)
+            if capture_internal:
+                internal_output_moisture.append(moisture.copy())
             reached_on_report = current_maximum < critical_moisture
 
         previous_time = current_time
@@ -444,7 +499,7 @@ def solve_problem_four(
     surface_radii = np.asarray(output_surface_radius)
     final_temperature = reconstruct_output_field(
         temperature,
-        thermal_conductivity(moisture),
+        properties.thermal_conductivity(moisture),
         CONVECTIVE_HEAT_COEFF,
         problem3.boundary_value(times[-1], boundary)[0],
         output_nodes,
@@ -464,6 +519,7 @@ def solve_problem_four(
         ),
         "radius_at_discrete_threshold_cm": 100.0 * surface_radii[-1],
         "moving_radius": moving_radius,
+        "property_model": property_model,
         "center_controls_threshold": center_controls_every_step,
         "all_domain_checked_every_step": checked_steps == len(iteration_counts),
         "radially_nonincreasing_every_step": radially_nonincreasing_every_step,
@@ -494,7 +550,36 @@ def solve_problem_four(
         "radius_data_final_time_s": float(radius_history.times[-1]),
         "radius_data_final_cm": 100.0 * float(radius_history.radii[-1]),
     }
-    return times, output_nodes, moisture_field, surface_radii, diagnostics
+    internal_field = None
+    if capture_internal:
+        internal_field = InternalFieldData(
+            times,
+            grid.centers.copy(),
+            np.asarray(internal_output_moisture),
+            surface_radii,
+        )
+    return (
+        times,
+        output_nodes,
+        moisture_field,
+        surface_radii,
+        diagnostics,
+        internal_field,
+    )
+
+
+def write_internal_field_data(
+    data: InternalFieldData,
+    output_path: Path = INTERNAL_FIELD_FILE,
+) -> None:
+    """保存内部细网格结果；该文件只供绘图与复核，不改变官方表格。"""
+    np.savez_compressed(
+        output_path,
+        times_s=data.times,
+        xi_centers=data.xi_centers,
+        moisture=data.moisture,
+        surface_radii_m=data.surface_radii,
+    )
 
 
 def write_result_workbook(
@@ -539,6 +624,31 @@ def _case_record(name: str, label: str, diagnostics: dict) -> dict:
     return record
 
 
+def new_diagnostics_report(baseline_diagnostics: dict) -> dict:
+    """创建只含当前基准结果的报告，避免沿用旧验证工况。"""
+    return {
+        "scope": (
+            "移动参考域离散诊断与机制对照；附录三与附录四同时改变时，"
+            "不能把总时间差全部解释为收缩效应。"
+        ),
+        "verification_complete": False,
+        "baseline": _case_record(
+            "appendix4_moving_radius",
+            "附录4物性 + 实测收缩半径",
+            baseline_diagnostics,
+        ),
+        "mechanism_comparison": [],
+        "numerical_refinement": [],
+        "boundary_sensitivity": [],
+    }
+
+
+def write_diagnostics_report(report: dict) -> None:
+    with DIAGNOSTICS_FILE.open("w", encoding="utf-8") as stream:
+        json.dump(report, stream, ensure_ascii=False, indent=2)
+        stream.write("\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="问题四移动边界干燥求解")
     parser.add_argument(
@@ -550,10 +660,17 @@ def main() -> None:
 
     boundary = problem3.read_drying_boundary(problem3.INPUT_FILE)
     radius_history = read_radius_history(RADIUS_FILE)
-    times, nodes, moisture, surface_radii, diagnostics = solve_problem_four(
-        boundary=boundary, radius_history=radius_history
+    times, nodes, moisture, surface_radii, diagnostics, internal_field = (
+        solve_problem_four(
+            boundary=boundary,
+            radius_history=radius_history,
+            capture_internal=True,
+        )
     )
     write_result_workbook(times, nodes, moisture)
+    if internal_field is None:
+        raise RuntimeError("未生成内部参考域结果。")
+    write_internal_field_data(internal_field)
     print(f"问题四重算完成：{OUTPUT_FILE}")
     print(
         f"连续阈值：{diagnostics['continuous_threshold_time_s'] / 3600:.4f} h；"
@@ -569,23 +686,14 @@ def main() -> None:
         f"{diagnostics['moisture_balance_relative_imbalance']:.3e}"
     )
 
+    report = new_diagnostics_report(diagnostics)
     if not args.verification:
+        write_diagnostics_report(report)
+        print(f"基准诊断已保存（未运行完整验证）：{DIAGNOSTICS_FILE}")
         return
 
-    report = {
-        "scope": (
-            "移动参考域离散诊断与机制对照；附录三与附录四同时改变时，"
-            "不能把总时间差全部解释为收缩效应。"
-        ),
-        "baseline": _case_record(
-            "appendix4_moving_radius", "附录4物性 + 实测收缩半径", diagnostics
-        ),
-        "mechanism_comparison": [],
-        "numerical_refinement": [],
-    }
-
     print("复算机制对照：附录4物性 + 固定半径")
-    _, _, _, _, fixed_diagnostics = solve_problem_four(
+    _, _, _, _, fixed_diagnostics, _ = solve_problem_four(
         moving_radius=False,
         boundary=boundary,
         radius_history=radius_history,
@@ -608,13 +716,28 @@ def main() -> None:
         )
     )
 
+    print("复算机制对照：附录3物性 + 实测收缩半径")
+    _, _, _, _, appendix3_moving_diagnostics, _ = solve_problem_four(
+        moving_radius=True,
+        property_model="appendix3",
+        boundary=boundary,
+        radius_history=radius_history,
+    )
+    report["mechanism_comparison"].append(
+        _case_record(
+            "appendix3_moving_radius",
+            "附录3物性 + 实测收缩半径",
+            appendix3_moving_diagnostics,
+        )
+    )
+
     refinement_cases = [
         ("space_refined", "空间加密 N=640, Δt=30 s", 640, 30.0),
         ("time_refined", "时间加密 N=320, Δt=15 s", 320, 15.0),
     ]
     for name, label, intervals, refined_time_step in refinement_cases:
         print(f"复算数值加密：{label}")
-        _, _, _, _, refined_diagnostics = solve_problem_four(
+        _, _, _, _, refined_diagnostics, _ = solve_problem_four(
             internal_intervals=intervals,
             time_step=refined_time_step,
             boundary=boundary,
@@ -624,6 +747,21 @@ def main() -> None:
             _case_record(name, label, refined_diagnostics)
         )
 
+    for scenario in problem3.build_boundary_scenarios(problem3.INPUT_FILE):
+        if scenario.name not in {
+            "temperature_minus_1sigma",
+            "temperature_plus_1sigma",
+        }:
+            continue
+        print(f"复算长期边界情景：{scenario.label}")
+        _, _, _, _, scenario_diagnostics, _ = solve_problem_four(
+            boundary=scenario.boundary,
+            radius_history=radius_history,
+        )
+        report["boundary_sensitivity"].append(
+            _case_record(scenario.name, scenario.label, scenario_diagnostics)
+        )
+
     moving_h = report["baseline"]["continuous_threshold_time_h"]
     fixed_h = report["mechanism_comparison"][0][
         "continuous_threshold_time_h"
@@ -631,16 +769,22 @@ def main() -> None:
     appendix3_h = report["mechanism_comparison"][1][
         "continuous_threshold_time_h"
     ]
+    appendix3_moving_h = report["mechanism_comparison"][2][
+        "continuous_threshold_time_h"
+    ]
     report["effects"] = {
-        "shrinkage_effect_minutes": (moving_h - fixed_h) * 60.0,
-        "property_effect_minutes": (fixed_h - appendix3_h) * 60.0,
-        "total_problem3_to_problem4_minutes": (moving_h - appendix3_h)
-        * 60.0,
+        "appendix3_shrinkage_effect_hours": appendix3_moving_h - appendix3_h,
+        "appendix4_shrinkage_effect_hours": moving_h - fixed_h,
+        "fixed_radius_property_effect_hours": fixed_h - appendix3_h,
+        "moving_radius_property_effect_hours": moving_h - appendix3_moving_h,
+        "total_problem3_to_problem4_hours": moving_h - appendix3_h,
+        "interpretation": (
+            "两种物性下的收缩效应不同，说明物性与几何存在交互；"
+            "不作唯一的加性贡献分解。"
+        ),
     }
-
-    with DIAGNOSTICS_FILE.open("w", encoding="utf-8") as stream:
-        json.dump(report, stream, ensure_ascii=False, indent=2)
-        stream.write("\n")
+    report["verification_complete"] = True
+    write_diagnostics_report(report)
     print(f"验证诊断已保存：{DIAGNOSTICS_FILE}")
 
 
