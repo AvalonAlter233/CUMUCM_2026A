@@ -1,5 +1,3 @@
-"""问题四：考虑实测径向收缩的移动边界热湿耦合模型。"""
-
 from __future__ import annotations
 
 import argparse
@@ -37,14 +35,12 @@ RELAXATION_FACTOR = 0.6
 
 
 class RadiusHistory(NamedTuple):
-    """附件二给出的时间与药材半径，单位分别为 s 和 m。"""
 
     times: np.ndarray
     radii: np.ndarray
 
 
 class ReferenceGrid(NamedTuple):
-    """归一化径向坐标 xi 上的单元中心有限体积网格。"""
 
     faces: np.ndarray
     centers: np.ndarray
@@ -53,7 +49,6 @@ class ReferenceGrid(NamedTuple):
 
 
 class MaterialProperties(NamedTuple):
-    """一组与含水率、温度配套的热湿物性函数。"""
 
     density: Callable[[np.ndarray], np.ndarray]
     heat_capacity: Callable[[np.ndarray], np.ndarray]
@@ -62,7 +57,6 @@ class MaterialProperties(NamedTuple):
 
 
 class InternalFieldData(NamedTuple):
-    """供绘图使用的内部参考域单元中心结果。"""
 
     times: np.ndarray
     xi_centers: np.ndarray
@@ -71,11 +65,10 @@ class InternalFieldData(NamedTuple):
 
 
 def read_radius_history(path: Path) -> RadiusHistory:
-    """读取附件二，校验时间递增和半径单调不增并转换为 SI 单位。"""
-    workbook = load_workbook(path, data_only=True, read_only=True)
+    book = load_workbook(path, data_only=True, read_only=True)
     rows = [
         row
-        for row in workbook.active.iter_rows(min_row=2, values_only=True)
+        for row in book.active.iter_rows(min_row=2, values_only=True)
         if row[0] is not None
     ]
     data = np.asarray(rows, dtype=float)
@@ -92,7 +85,6 @@ def read_radius_history(path: Path) -> RadiusHistory:
 
 
 def radius_value(current_time: float, history: RadiusHistory) -> float:
-    """附件范围内分段线性插值，超出末时刻后保持末值。"""
     return float(
         np.interp(
             current_time,
@@ -120,17 +112,16 @@ def moisture_diffusivity(
     moisture: np.ndarray,
     temperature_celsius: np.ndarray,
 ) -> np.ndarray:
-    safe_moisture = np.maximum(moisture, 1.0e-12)
-    temperature_kelvin = temperature_celsius + 273.15
+    c_safe = np.maximum(moisture, 1.0e-12)
+    temp_k = temperature_celsius + 273.15
     return (
         4.2e-4
-        * np.exp(-0.30 / safe_moisture)
-        * np.exp(-3850.0 / temperature_kelvin)
+        * np.exp(-0.30 / c_safe)
+        * np.exp(-3850.0 / temp_k)
     )
 
 
 def material_properties(name: str) -> MaterialProperties:
-    """返回附录三或附录四物性，供同一移动边界框架作机制对照。"""
     if name == "appendix4":
         return MaterialProperties(
             density, heat_capacity, thermal_conductivity, moisture_diffusivity
@@ -150,8 +141,8 @@ def build_reference_grid(intervals: int) -> ReferenceGrid:
         raise ValueError("内部径向区间数至少为 4。")
     faces = np.linspace(0.0, 1.0, intervals + 1)
     centers = 0.5 * (faces[:-1] + faces[1:])
-    volumes = 0.5 * (faces[1:] ** 2 - faces[:-1] ** 2)
-    return ReferenceGrid(faces, centers, volumes, 1.0 / intervals)
+    vol = 0.5 * (faces[1:] ** 2 - faces[:-1] ** 2)
+    return ReferenceGrid(faces, centers, vol, 1.0 / intervals)
 
 
 def assemble_reference_system(
@@ -164,35 +155,34 @@ def assemble_reference_system(
     radius: float,
     time_step: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """在 xi=r/R(t) 上组装后向 Euler 有限体积方程。"""
     if radius <= 0:
         raise ValueError("药材半径必须为正数。")
     storage = storage_capacity * grid.volumes / time_step
-    face_transport = problem3.harmonic_mean(
+    coef_face = problem3.harmonic_mean(
         transport_coefficients[:-1], transport_coefficients[1:]
     )
-    internal_conductance = (
+    g_inner = (
         grid.faces[1:-1]
-        * face_transport
+        * coef_face
         / (radius**2 * grid.spacing)
     )
-    diagonal = storage.copy()
-    diagonal[:-1] += internal_conductance
-    diagonal[1:] += internal_conductance
-    lower = -internal_conductance.copy()
-    upper = -internal_conductance.copy()
-    right_hand_side = storage * old_values
+    diag = storage.copy()
+    diag[:-1] += g_inner
+    diag[1:] += g_inner
+    lower = -g_inner.copy()
+    upper = -g_inner.copy()
+    rhs = storage * old_values
 
-    last_transport = max(float(transport_coefficients[-1]), 1.0e-30)
-    physical_half_cell = 0.5 * radius * grid.spacing
-    effective_transfer = 1.0 / (
+    coef_last = max(float(transport_coefficients[-1]), 1.0e-30)
+    half_dr = 0.5 * radius * grid.spacing
+    h_eff = 1.0 / (
         1.0 / external_transfer_coefficient
-        + physical_half_cell / last_transport
+        + half_dr / coef_last
     )
-    surface_conductance = effective_transfer / radius
-    diagonal[-1] += surface_conductance
-    right_hand_side[-1] += surface_conductance * external_value
-    return lower, diagonal, upper, right_hand_side
+    g_surf = h_eff / radius
+    diag[-1] += g_surf
+    rhs[-1] += g_surf * external_value
+    return lower, diag, upper, rhs
 
 
 def solve_tridiagonal(
@@ -201,7 +191,6 @@ def solve_tridiagonal(
     upper: np.ndarray,
     right_hand_side: np.ndarray,
 ) -> np.ndarray:
-    """使用稳定、无外部二进制依赖的 Thomas 算法。"""
     return problem3.solve_tridiagonal(
         lower, diagonal, upper, right_hand_side
     )
@@ -216,7 +205,7 @@ def advance_temperature(
     time_step: float,
     properties: MaterialProperties,
 ) -> np.ndarray:
-    system = assemble_reference_system(
+    lin_sys = assemble_reference_system(
         old_temperature,
         properties.density(reference_moisture)
         * properties.heat_capacity(reference_moisture),
@@ -227,7 +216,7 @@ def advance_temperature(
         radius,
         time_step,
     )
-    return solve_tridiagonal(*system)
+    return solve_tridiagonal(*lin_sys)
 
 
 def advance_moisture(
@@ -240,7 +229,7 @@ def advance_moisture(
     time_step: float,
     properties: MaterialProperties,
 ) -> np.ndarray:
-    system = assemble_reference_system(
+    lin_sys = assemble_reference_system(
         old_moisture,
         np.ones_like(old_moisture),
         properties.moisture_diffusivity(
@@ -252,7 +241,7 @@ def advance_moisture(
         radius,
         time_step,
     )
-    return solve_tridiagonal(*system)
+    return solve_tridiagonal(*lin_sys)
 
 
 def reconstruct_output_field(
@@ -264,27 +253,25 @@ def reconstruct_output_field(
     grid: ReferenceGrid,
     radius: float,
 ) -> np.ndarray:
-    """重构固定物理位置及当前移动表面的场值。"""
     if np.any(physical_output_nodes < 0.0) or np.any(
         physical_output_nodes >= radius
     ):
         raise ValueError("固定输出位置必须位于当前药材内部。")
-    xi_nodes = physical_output_nodes / radius
-    interior_values = np.interp(xi_nodes, grid.centers, cell_values)
-    interior_values[0] = (9.0 * cell_values[0] - cell_values[1]) / 8.0
+    xi_out = physical_output_nodes / radius
+    inner_values = np.interp(xi_out, grid.centers, cell_values)
+    inner_values[0] = (9.0 * cell_values[0] - cell_values[1]) / 8.0
 
-    last_transport = max(float(transport_coefficients[-1]), 1.0e-30)
-    physical_half_cell = 0.5 * radius * grid.spacing
-    half_cell_conductance = last_transport / physical_half_cell
-    surface_value = (
-        half_cell_conductance * cell_values[-1]
+    coef_last = max(float(transport_coefficients[-1]), 1.0e-30)
+    half_dr = 0.5 * radius * grid.spacing
+    g_half = coef_last / half_dr
+    val_surf = (
+        g_half * cell_values[-1]
         + external_transfer_coefficient * external_value
-    ) / (half_cell_conductance + external_transfer_coefficient)
-    return np.concatenate([interior_values, np.array([surface_value])])
+    ) / (g_half + external_transfer_coefficient)
+    return np.concatenate([inner_values, np.array([val_surf])])
 
 
 def template_output_nodes() -> np.ndarray:
-    """题目模板中始终位于药材内部的固定物理位置，单位 m。"""
     return np.arange(0.0, 0.011 + 0.0005, 0.001)
 
 
@@ -311,14 +298,13 @@ def solve_problem_four(
     dict,
     InternalFieldData | None,
 ]:
-    """用指定物性求解移动或固定半径干燥过程。"""
-    report_steps = int(round(report_interval / time_step))
-    total_steps = int(round(max_time / time_step))
-    if report_steps < 1 or not np.isclose(
-        report_steps * time_step, report_interval
+    save_every = int(round(report_interval / time_step))
+    n_steps = int(round(max_time / time_step))
+    if save_every < 1 or not np.isclose(
+        save_every * time_step, report_interval
     ):
         raise ValueError("输出间隔必须是内部时间步长的整数倍。")
-    if total_steps < 1 or not np.isclose(total_steps * time_step, max_time):
+    if n_steps < 1 or not np.isclose(n_steps * time_step, max_time):
         raise ValueError("最大时间必须是内部时间步长的整数倍。")
 
     if boundary is None:
@@ -326,225 +312,225 @@ def solve_problem_four(
     if radius_history is None:
         radius_history = read_radius_history(RADIUS_FILE)
 
-    grid = build_reference_grid(internal_intervals)
+    mesh = build_reference_grid(internal_intervals)
     properties = material_properties(property_model)
-    output_nodes = template_output_nodes()
-    temperature = np.full(internal_intervals, INITIAL_TEMPERATURE)
-    moisture = np.full(internal_intervals, INITIAL_MOISTURE)
+    r_nodes = template_output_nodes()
+    temp = np.full(internal_intervals, INITIAL_TEMPERATURE)
+    water = np.full(internal_intervals, INITIAL_MOISTURE)
 
-    output_times: list[float] = []
-    output_moisture: list[np.ndarray] = []
-    output_surface_radius: list[float] = []
-    internal_output_moisture: list[np.ndarray] = []
-    iteration_counts: list[int] = []
-    previous_time = 0.0
-    previous_maximum = INITIAL_MOISTURE
-    continuous_threshold_time: float | None = None
-    threshold_before: float | None = None
-    threshold_after: float | None = None
-    initial_inventory = float(np.dot(moisture, grid.volumes))
-    current_inventory = initial_inventory
-    cumulative_outflow = 0.0
-    maximum_step_balance_residual = 0.0
+    time_log: list[float] = []
+    water_log: list[np.ndarray] = []
+    radius_log: list[float] = []
+    inner_water_log: list[np.ndarray] = []
+    iter_log: list[int] = []
+    t_prev = 0.0
+    c_max_prev = INITIAL_MOISTURE
+    t_cross: float | None = None
+    c_before: float | None = None
+    c_after: float | None = None
+    stock_init = float(np.dot(water, mesh.volumes))
+    stock_now = stock_init
+    outflow_sum = 0.0
+    max_balance_err = 0.0
     center_controls_every_step = True
     radially_nonincreasing_every_step = True
     checked_steps = 0
 
-    for step in range(1, total_steps + 1):
-        current_time = step * time_step
+    for step in range(1, n_steps + 1):
+        t_now = step * time_step
         radius = (
-            radius_value(current_time, radius_history)
+            radius_value(t_now, radius_history)
             if moving_radius
             else float(radius_history.radii[0])
         )
-        room_temperature, room_moisture = problem3.boundary_value(
-            current_time, boundary
+        temp_air, water_air = problem3.boundary_value(
+            t_now, boundary
         )
-        temperature_iterate = temperature.copy()
-        moisture_iterate = moisture.copy()
+        temp_iter = temp.copy()
+        water_iter = water.copy()
 
         for iteration in range(1, MAX_ITERATIONS + 1):
-            temperature_candidate = advance_temperature(
-                temperature,
-                moisture_iterate,
-                room_temperature,
-                grid,
+            temp_trial = advance_temperature(
+                temp,
+                water_iter,
+                temp_air,
+                mesh,
                 radius,
                 time_step,
                 properties,
             )
-            moisture_candidate = advance_moisture(
-                moisture,
-                temperature_candidate,
-                moisture_iterate,
-                room_moisture,
-                grid,
+            water_trial = advance_moisture(
+                water,
+                temp_trial,
+                water_iter,
+                water_air,
+                mesh,
                 radius,
                 time_step,
                 properties,
             )
-            new_temperature = (
-                RELAXATION_FACTOR * temperature_candidate
-                + (1.0 - RELAXATION_FACTOR) * temperature_iterate
+            temp_new = (
+                RELAXATION_FACTOR * temp_trial
+                + (1.0 - RELAXATION_FACTOR) * temp_iter
             )
-            new_moisture = (
-                RELAXATION_FACTOR * moisture_candidate
-                + (1.0 - RELAXATION_FACTOR) * moisture_iterate
+            water_new = (
+                RELAXATION_FACTOR * water_trial
+                + (1.0 - RELAXATION_FACTOR) * water_iter
             )
-            temperature_error = float(
+            err_t = float(
                 np.max(
-                    np.abs(new_temperature - temperature_iterate)
-                    / (1.0 + np.abs(new_temperature))
+                    np.abs(temp_new - temp_iter)
+                    / (1.0 + np.abs(temp_new))
                 )
             )
-            moisture_error = float(
+            err_c = float(
                 np.max(
-                    np.abs(new_moisture - moisture_iterate)
-                    / (1.0 + np.abs(new_moisture))
+                    np.abs(water_new - water_iter)
+                    / (1.0 + np.abs(water_new))
                 )
             )
-            temperature_iterate = new_temperature
-            moisture_iterate = new_moisture
-            if max(temperature_error, moisture_error) < CONVERGENCE_TOL:
+            temp_iter = temp_new
+            water_iter = water_new
+            if max(err_t, err_c) < CONVERGENCE_TOL:
                 break
         else:
             raise RuntimeError(
-                f"{current_time:.0f} s 未收敛："
-                f"{temperature_error:.3e}, {moisture_error:.3e}"
+                f"{t_now:.0f} s 未收敛："
+                f"{err_t:.3e}, {err_c:.3e}"
             )
 
-        temperature = temperature_iterate
-        moisture = moisture_iterate
-        iteration_counts.append(iteration)
-        if not np.all(np.isfinite(moisture)) or np.min(moisture) <= 0.0:
-            raise FloatingPointError(f"{current_time:.0f} s 含水率异常。")
+        temp = temp_iter
+        water = water_iter
+        iter_log.append(iteration)
+        if not np.all(np.isfinite(water)) or np.min(water) <= 0.0:
+            raise FloatingPointError(f"{t_now:.0f} s 含水率异常。")
 
-        diffusivity = properties.moisture_diffusivity(moisture, temperature)
-        last_diffusivity = max(float(diffusivity[-1]), 1.0e-30)
-        effective_mass_transfer = 1.0 / (
+        d_cell = properties.moisture_diffusivity(water, temp)
+        d_last = max(float(d_cell[-1]), 1.0e-30)
+        hm_eff = 1.0 / (
             1.0 / CONVECTIVE_MASS_COEFF
-            + 0.5 * radius * grid.spacing / last_diffusivity
+            + 0.5 * radius * mesh.spacing / d_last
         )
-        surface_outflow = (
-            effective_mass_transfer
+        flux_surf = (
+            hm_eff
             / radius
-            * (float(moisture[-1]) - room_moisture)
+            * (float(water[-1]) - water_air)
         )
-        next_inventory = float(np.dot(moisture, grid.volumes))
-        step_balance_residual = abs(
-            next_inventory - current_inventory + time_step * surface_outflow
-        ) / initial_inventory
-        maximum_step_balance_residual = max(
-            maximum_step_balance_residual, step_balance_residual
+        stock_next = float(np.dot(water, mesh.volumes))
+        balance_err = abs(
+            stock_next - stock_now + time_step * flux_surf
+        ) / stock_init
+        max_balance_err = max(
+            max_balance_err, balance_err
         )
-        cumulative_outflow += time_step * surface_outflow
-        current_inventory = next_inventory
+        outflow_sum += time_step * flux_surf
+        stock_now = stock_next
 
-        reconstructed = reconstruct_output_field(
-            moisture,
-            diffusivity,
+        c_nodes = reconstruct_output_field(
+            water,
+            d_cell,
             CONVECTIVE_MASS_COEFF,
-            room_moisture,
-            output_nodes,
-            grid,
+            water_air,
+            r_nodes,
+            mesh,
             radius,
         )
-        current_maximum = max(
-            float(np.max(moisture)), float(np.max(reconstructed))
+        c_max_now = max(
+            float(np.max(water)), float(np.max(c_nodes))
         )
-        center_value = float(reconstructed[0])
+        axis_val = float(c_nodes[0])
         center_controls_every_step = center_controls_every_step and bool(
-            current_maximum <= center_value + 1.0e-12
+            c_max_now <= axis_val + 1.0e-12
         )
         radially_nonincreasing_every_step = (
             radially_nonincreasing_every_step
-            and bool(np.all(np.diff(moisture) <= 1.0e-12))
-            and bool(np.all(np.diff(reconstructed) <= 1.0e-12))
+            and bool(np.all(np.diff(water) <= 1.0e-12))
+            and bool(np.all(np.diff(c_nodes) <= 1.0e-12))
         )
         checked_steps += 1
 
         if (
-            continuous_threshold_time is None
-            and previous_maximum >= critical_moisture
-            and current_maximum < critical_moisture
+            t_cross is None
+            and c_max_prev >= critical_moisture
+            and c_max_now < critical_moisture
         ):
-            continuous_threshold_time = problem3.linear_threshold_crossing(
-                previous_time,
-                previous_maximum,
-                current_time,
-                current_maximum,
+            t_cross = problem3.linear_threshold_crossing(
+                t_prev,
+                c_max_prev,
+                t_now,
+                c_max_now,
                 critical_moisture,
             )
-            threshold_before = previous_maximum
-            threshold_after = current_maximum
+            c_before = c_max_prev
+            c_after = c_max_now
 
         reached_on_report = False
-        if step % report_steps == 0:
-            output_times.append(current_time)
-            output_moisture.append(reconstructed.copy())
-            output_surface_radius.append(radius)
+        if step % save_every == 0:
+            time_log.append(t_now)
+            water_log.append(c_nodes.copy())
+            radius_log.append(radius)
             if capture_internal:
-                internal_output_moisture.append(moisture.copy())
-            reached_on_report = current_maximum < critical_moisture
+                inner_water_log.append(water.copy())
+            reached_on_report = c_max_now < critical_moisture
 
-        previous_time = current_time
-        previous_maximum = current_maximum
+        t_prev = t_now
+        c_max_prev = c_max_now
         if reached_on_report:
             break
     else:
         raise RuntimeError(f"{max_time / 3600:.1f} h 内未达到阈值。")
 
-    moisture_field = np.asarray(output_moisture)
-    times = np.asarray(output_times)
-    surface_radii = np.asarray(output_surface_radius)
-    final_temperature = reconstruct_output_field(
-        temperature,
-        properties.thermal_conductivity(moisture),
+    water_field = np.asarray(water_log)
+    times = np.asarray(time_log)
+    radius_series = np.asarray(radius_log)
+    temp_final = reconstruct_output_field(
+        temp,
+        properties.thermal_conductivity(water),
         CONVECTIVE_HEAT_COEFF,
         problem3.boundary_value(times[-1], boundary)[0],
-        output_nodes,
-        grid,
-        surface_radii[-1],
+        r_nodes,
+        mesh,
+        radius_series[-1],
     )
     diagnostics = {
-        "continuous_threshold_time_s": float(continuous_threshold_time),
+        "continuous_threshold_time_s": float(t_cross),
         "discrete_threshold_time_s": float(times[-1]),
-        "maximum_moisture_before": float(threshold_before),
-        "maximum_moisture_after": float(threshold_after),
+        "maximum_moisture_before": float(c_before),
+        "maximum_moisture_after": float(c_after),
         "radius_at_continuous_threshold_cm": 100.0
         * (
-            radius_value(float(continuous_threshold_time), radius_history)
+            radius_value(float(t_cross), radius_history)
             if moving_radius
             else float(radius_history.radii[0])
         ),
-        "radius_at_discrete_threshold_cm": 100.0 * surface_radii[-1],
+        "radius_at_discrete_threshold_cm": 100.0 * radius_series[-1],
         "moving_radius": moving_radius,
         "property_model": property_model,
         "center_controls_threshold": center_controls_every_step,
-        "all_domain_checked_every_step": checked_steps == len(iteration_counts),
+        "all_domain_checked_every_step": checked_steps == len(iter_log),
         "radially_nonincreasing_every_step": radially_nonincreasing_every_step,
         "moisture_balance_relative_imbalance": (
             problem3.relative_balance_imbalance(
-                initial_inventory, current_inventory, cumulative_outflow
+                stock_init, stock_now, outflow_sum
             )
         ),
         "maximum_step_balance_relative_residual": (
-            maximum_step_balance_residual
+            max_balance_err
         ),
-        "initial_reference_moisture_integral": initial_inventory,
-        "final_reference_moisture_integral": current_inventory,
-        "cumulative_reference_boundary_outflow": cumulative_outflow,
-        "maximum_picard_iterations": int(max(iteration_counts)),
-        "mean_picard_iterations": float(np.mean(iteration_counts)),
+        "initial_reference_moisture_integral": stock_init,
+        "final_reference_moisture_integral": stock_now,
+        "cumulative_reference_boundary_outflow": outflow_sum,
+        "maximum_picard_iterations": int(max(iter_log)),
+        "mean_picard_iterations": float(np.mean(iter_log)),
         "internal_intervals": internal_intervals,
-        "reference_spacing": grid.spacing,
+        "reference_spacing": mesh.spacing,
         "time_step_s": time_step,
         "report_interval_s": report_interval,
         "critical_moisture": critical_moisture,
-        "final_center_moisture": float(moisture_field[-1, 0]),
-        "final_surface_moisture": float(moisture_field[-1, -1]),
-        "final_center_temperature_c": float(final_temperature[0]),
-        "final_surface_temperature_c": float(final_temperature[-1]),
+        "final_center_moisture": float(water_field[-1, 0]),
+        "final_surface_moisture": float(water_field[-1, -1]),
+        "final_center_temperature_c": float(temp_final[0]),
+        "final_surface_temperature_c": float(temp_final[-1]),
         "plateau_temperature_c": boundary.plateau_temperature,
         "plateau_moisture_kgkg": boundary.plateau_moisture,
         "radius_data_final_time_s": float(radius_history.times[-1]),
@@ -554,15 +540,15 @@ def solve_problem_four(
     if capture_internal:
         internal_field = InternalFieldData(
             times,
-            grid.centers.copy(),
-            np.asarray(internal_output_moisture),
-            surface_radii,
+            mesh.centers.copy(),
+            np.asarray(inner_water_log),
+            radius_series,
         )
     return (
         times,
-        output_nodes,
-        moisture_field,
-        surface_radii,
+        r_nodes,
+        water_field,
+        radius_series,
         diagnostics,
         internal_field,
     )
@@ -572,7 +558,6 @@ def write_internal_field_data(
     data: InternalFieldData,
     output_path: Path = INTERNAL_FIELD_FILE,
 ) -> None:
-    """保存内部细网格结果；该文件只供绘图与复核，不改变官方表格。"""
     np.savez_compressed(
         output_path,
         times_s=data.times,
@@ -588,27 +573,26 @@ def write_result_workbook(
     moisture_field: np.ndarray,
     output_path: Path = OUTPUT_FILE,
 ) -> None:
-    """按 result4 模板写入固定物理位置和动态表面含水率。"""
-    workbook = load_workbook(output_path)
-    worksheet = workbook.worksheets[0]
-    if worksheet.max_row > 1:
-        worksheet.delete_rows(2, worksheet.max_row - 1)
-    if worksheet.max_column > 1:
-        worksheet.delete_cols(2, worksheet.max_column - 1)
-    worksheet.cell(1, 1).value = "时间\\到药材中心的距离"
-    worksheet.cell(1, 1).number_format = "@"
+    book = load_workbook(output_path)
+    sheet = book.worksheets[0]
+    if sheet.max_row > 1:
+        sheet.delete_rows(2, sheet.max_row - 1)
+    if sheet.max_column > 1:
+        sheet.delete_cols(2, sheet.max_column - 1)
+    sheet.cell(1, 1).value = "时间\\到药材中心的距离"
+    sheet.cell(1, 1).number_format = "@"
     for column, header in enumerate(output_headers(nodes), start=2):
-        worksheet.cell(1, column).value = header
-        worksheet.cell(1, column).number_format = (
+        sheet.cell(1, column).value = header
+        sheet.cell(1, column).number_format = (
             "0.0" if isinstance(header, float) else "@"
         )
-    for row, current_time in enumerate(times, start=2):
-        worksheet.cell(row, 1).value = int(round(float(current_time)))
-        worksheet.cell(row, 1).number_format = "0"
+    for row, t_now in enumerate(times, start=2):
+        sheet.cell(row, 1).value = int(round(float(t_now)))
+        sheet.cell(row, 1).number_format = "0"
         for column, value in enumerate(moisture_field[row - 2], start=2):
-            worksheet.cell(row, column).value = float(value)
-            worksheet.cell(row, column).number_format = "0.0000"
-    workbook.save(output_path)
+            sheet.cell(row, column).value = float(value)
+            sheet.cell(row, column).number_format = "0.0000"
+    book.save(output_path)
 
 
 def _case_record(name: str, label: str, diagnostics: dict) -> dict:
@@ -625,7 +609,6 @@ def _case_record(name: str, label: str, diagnostics: dict) -> dict:
 
 
 def new_diagnostics_report(baseline_diagnostics: dict) -> dict:
-    """创建只含当前基准结果的报告，避免沿用旧验证工况。"""
     return {
         "scope": (
             "移动参考域离散诊断与机制对照；附录三与附录四同时改变时，"
@@ -660,14 +643,14 @@ def main() -> None:
 
     boundary = problem3.read_drying_boundary(problem3.INPUT_FILE)
     radius_history = read_radius_history(RADIUS_FILE)
-    times, nodes, moisture, surface_radii, diagnostics, internal_field = (
+    times, nodes, water, radius_series, diagnostics, internal_field = (
         solve_problem_four(
             boundary=boundary,
             radius_history=radius_history,
             capture_internal=True,
         )
     )
-    write_result_workbook(times, nodes, moisture)
+    write_result_workbook(times, nodes, water)
     if internal_field is None:
         raise RuntimeError("未生成内部参考域结果。")
     write_internal_field_data(internal_field)
@@ -679,7 +662,7 @@ def main() -> None:
     )
     print(
         f"达标时半径：{diagnostics['radius_at_discrete_threshold_cm']:.4f} cm；"
-        f"输出尺寸：{moisture.shape[0]}×{moisture.shape[1]}"
+        f"输出尺寸：{water.shape[0]}×{water.shape[1]}"
     )
     print(
         "参考域 C 方程累计相对收支不平衡："
@@ -693,26 +676,26 @@ def main() -> None:
         return
 
     print("复算机制对照：附录4物性 + 固定半径")
-    _, _, _, _, fixed_diagnostics, _ = solve_problem_four(
+    _, _, _, _, fixed_stats, _ = solve_problem_four(
         moving_radius=False,
         boundary=boundary,
         radius_history=radius_history,
     )
     report["mechanism_comparison"].append(
         _case_record(
-            "appendix4_fixed_radius", "附录4物性 + 固定半径", fixed_diagnostics
+            "appendix4_fixed_radius", "附录4物性 + 固定半径", fixed_stats
         )
     )
 
     print("复算机制对照：附录3物性 + 固定半径（问题三）")
-    _, _, _, problem3_diagnostics = problem3.solve_problem_three(
+    _, _, _, q3_stats = problem3.solve_problem_three(
         boundary=boundary
     )
     report["mechanism_comparison"].append(
         _case_record(
             "appendix3_fixed_radius",
             "附录3物性 + 固定半径（问题三）",
-            problem3_diagnostics,
+            q3_stats,
         )
     )
 
@@ -731,20 +714,20 @@ def main() -> None:
         )
     )
 
-    refinement_cases = [
+    mesh_cases = [
         ("space_refined", "空间加密 N=640, Δt=30 s", 640, 30.0),
         ("time_refined", "时间加密 N=320, Δt=15 s", 320, 15.0),
     ]
-    for name, label, intervals, refined_time_step in refinement_cases:
+    for name, label, intervals, dt_fine in mesh_cases:
         print(f"复算数值加密：{label}")
-        _, _, _, _, refined_diagnostics, _ = solve_problem_four(
+        _, _, _, _, refined_stats, _ = solve_problem_four(
             internal_intervals=intervals,
-            time_step=refined_time_step,
+            time_step=dt_fine,
             boundary=boundary,
             radius_history=radius_history,
         )
         report["numerical_refinement"].append(
-            _case_record(name, label, refined_diagnostics)
+            _case_record(name, label, refined_stats)
         )
 
     for scenario in problem3.build_boundary_scenarios(problem3.INPUT_FILE):
@@ -754,12 +737,12 @@ def main() -> None:
         }:
             continue
         print(f"复算长期边界情景：{scenario.label}")
-        _, _, _, _, scenario_diagnostics, _ = solve_problem_four(
+        _, _, _, _, case_stats, _ = solve_problem_four(
             boundary=scenario.boundary,
             radius_history=radius_history,
         )
         report["boundary_sensitivity"].append(
-            _case_record(scenario.name, scenario.label, scenario_diagnostics)
+            _case_record(scenario.name, scenario.label, case_stats)
         )
 
     moving_h = report["baseline"]["continuous_threshold_time_h"]

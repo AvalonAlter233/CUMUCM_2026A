@@ -37,7 +37,34 @@ def test_appendix_four_property_formulas_match_specification():
         * np.exp(-0.30 / moisture)
         * np.exp(-3850.0 / (temperature + 273.15))
     )
-    assert np.allclose(problem4.moisture_diffusivity(moisture, temperature), expected_d)
+    np.testing.assert_allclose(
+        problem4.moisture_diffusivity(moisture, temperature),
+        expected_d,
+        rtol=1.0e-12,
+        atol=0.0,
+    )
+
+
+def test_appendix_three_property_model_reuses_problem_three_formulas():
+    moisture = np.array([0.15, 1.0, 2.55])
+    temperature = np.array([28.0, 40.0, 50.0])
+    properties = problem4.material_properties("appendix3")
+    np.testing.assert_allclose(
+        properties.density(moisture), problem3.density(moisture)
+    )
+    np.testing.assert_allclose(
+        properties.heat_capacity(moisture), problem3.heat_capacity(moisture)
+    )
+    np.testing.assert_allclose(
+        properties.thermal_conductivity(moisture),
+        problem3.thermal_conductivity(moisture),
+    )
+    np.testing.assert_allclose(
+        properties.moisture_diffusivity(moisture, temperature),
+        problem3.moisture_diffusivity(moisture, temperature),
+        rtol=1.0e-12,
+        atol=0.0,
+    )
 
 
 def test_reference_grid_has_correct_axisymmetric_volume():
@@ -66,6 +93,37 @@ def test_reference_system_has_positive_diagonal_and_expected_shape():
     assert np.all(diagonal > 0.0)
     assert np.all(lower < 0.0)
     assert np.all(upper < 0.0)
+
+
+def test_fixed_radius_reference_system_matches_problem_three_system():
+    intervals = 8
+    reference_grid = problem4.build_reference_grid(intervals)
+    physical_grid = problem3.build_grid(intervals)
+    old = np.linspace(1.0, 0.5, intervals)
+    storage = np.linspace(1.0, 2.0, intervals)
+    transport = np.linspace(1.0e-9, 2.0e-9, intervals)
+    reference_system = problem4.assemble_reference_system(
+        old,
+        storage,
+        transport,
+        problem4.CONVECTIVE_MASS_COEFF,
+        0.05,
+        reference_grid,
+        problem4.INITIAL_RADIUS,
+        30.0,
+    )
+    physical_system = problem3.assemble_system(
+        old,
+        storage,
+        transport,
+        problem3.CONVECTIVE_MASS_COEFF,
+        0.05,
+        physical_grid,
+        30.0,
+    )
+    reference_solution = problem4.solve_tridiagonal(*reference_system)
+    physical_solution = problem3.solve_tridiagonal(*physical_system)
+    np.testing.assert_allclose(reference_solution, physical_solution, rtol=1.0e-12)
 
 
 def test_tridiagonal_solver_matches_dense_solution():
@@ -127,9 +185,51 @@ def test_template_nodes_and_headers_follow_result4_layout():
     ]
 
 
+def test_solver_can_capture_full_internal_reference_field(tmp_path):
+    result = problem4.solve_problem_four(
+        internal_intervals=8,
+        time_step=30.0,
+        report_interval=3600.0,
+        max_time=3600.0,
+        critical_moisture=2.55,
+        capture_internal=True,
+    )
+    times, _, _, surface_radii, _, internal = result
+    assert internal is not None
+    assert internal.moisture.shape == (1, 8)
+    np.testing.assert_allclose(internal.times, times)
+    np.testing.assert_allclose(internal.surface_radii, surface_radii)
+    assert np.all(np.diff(internal.xi_centers) > 0.0)
+
+    output = tmp_path / "internal_field.npz"
+    problem4.write_internal_field_data(internal, output)
+    with np.load(output) as saved:
+        np.testing.assert_allclose(saved["times_s"], times)
+        np.testing.assert_allclose(saved["xi_centers"], internal.xi_centers)
+        np.testing.assert_allclose(saved["moisture"], internal.moisture)
+        np.testing.assert_allclose(saved["surface_radii_m"], surface_radii)
+
+
+def test_baseline_report_cannot_reuse_stale_verification_cases():
+    baseline = {
+        "continuous_threshold_time_s": 10.0,
+        "discrete_threshold_time_s": 60.0,
+    }
+    report = problem4.new_diagnostics_report(baseline)
+    assert not report["verification_complete"]
+    assert report["mechanism_comparison"] == []
+    assert report["numerical_refinement"] == []
+    assert report["boundary_sensitivity"] == []
+
+
 def test_result_workbook_and_diagnostics_confirm_official_end_time():
     workbook = load_workbook(problem4.OUTPUT_FILE, read_only=True, data_only=True)
     sheet = workbook.active
+    assert sheet.max_column == 14
+    assert [sheet.cell(1, c).value for c in range(1, 15)] == [
+        "时间\\到药材中心的距离",
+        *problem4.output_headers(problem4.template_output_nodes()),
+    ]
     previous = np.array(
         [sheet.cell(sheet.max_row - 1, c).value for c in range(2, sheet.max_column + 1)]
     )
@@ -149,4 +249,3 @@ def test_result_workbook_and_diagnostics_confirm_official_end_time():
     assert baseline["all_domain_checked_every_step"]
     assert baseline["radially_nonincreasing_every_step"]
     assert baseline["moisture_balance_relative_imbalance"] < 1.0e-5
-
