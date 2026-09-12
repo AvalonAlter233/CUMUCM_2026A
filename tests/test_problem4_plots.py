@@ -7,6 +7,13 @@ import pytest
 import 问题四_绘图 as plotting
 
 
+def _has_visible_major_grid(axis):
+    return (
+        any(line.get_visible() for line in axis.get_xgridlines())
+        and any(line.get_visible() for line in axis.get_ygridlines())
+    )
+
+
 def test_result_reader_and_threshold_detection_match_workbook():
     times, radii, moisture = plotting.read_result()
     assert times[0] == pytest.approx(60.0 / 3600.0)
@@ -90,6 +97,25 @@ def test_core_figures_show_moving_field_and_nonparallel_interaction():
     assert not np.isclose(y0[1] - y0[0], y1[1] - y1[0])
     plotting.close_without_export(field)
     plotting.close_without_export(interaction)
+
+
+def test_all_non_heatmap_axes_show_grids_while_heatmap_axis_does_not():
+    data = plotting.load_plot_data()
+    ordinary_builders = (
+        plotting.plot_shrinkage_consistency,
+        plotting.plot_threshold_evidence,
+        plotting.plot_mechanism_interaction,
+        plotting.plot_robustness,
+    )
+    for builder in ordinary_builders:
+        figure = builder(data)
+        assert all(_has_visible_major_grid(axis) for axis in figure.axes)
+        plotting.close_without_export(figure)
+
+    field = plotting.plot_moving_field(data)
+    assert not _has_visible_major_grid(field.axes[0])
+    assert _has_visible_major_grid(field.axes[1])
+    plotting.close_without_export(field)
 
 
 def test_robustness_value_labels_stay_to_the_right_of_markers():
