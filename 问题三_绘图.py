@@ -1,33 +1,27 @@
-"""问题三绘图脚本。
-
-脚本只读取附件一和附件三中的 result3.xlsx，生成论文所需的 PNG 图。
-所有路径均相对于本脚本所在目录，换电脑后无需修改绝对路径。
-"""
-
 from __future__ import annotations
-
+ 
 import json
 from pathlib import Path
-
+ 
 import matplotlib.pyplot as plt
 import numpy as np
 from openpyxl import load_workbook
 from matplotlib.ticker import ScalarFormatter
-
-
+ 
+ 
 PROJECT_ROOT = Path(__file__).resolve().parent
 BOUNDARY_FILE = PROJECT_ROOT / "附件" / "附件1.xlsx"
 RESULT_FILE = PROJECT_ROOT / "附件" / "附件3" / "result3.xlsx"
 DIAGNOSTICS_FILE = PROJECT_ROOT / "附件" / "附件3" / "result3_diagnostics.json"
 FIGURE_DIR = PROJECT_ROOT / "figures" / "问题三"
 CRITICAL_MOISTURE = 0.15
-
+ 
 plt.rcParams["font.sans-serif"] = [
     "Microsoft YaHei", "SimHei", "SimSun", "Arial Unicode MS", "DejaVu Sans"
 ]
 plt.rcParams["axes.unicode_minus"] = False
-
-
+ 
+ 
 def read_boundary() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     workbook = load_workbook(BOUNDARY_FILE, data_only=True, read_only=True)
     rows = [
@@ -36,8 +30,8 @@ def read_boundary() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     ]
     data = np.asarray(rows, dtype=float)
     return data[:, 0] / 3600.0, data[:, 1], data[:, 2]
-
-
+ 
+ 
 def read_result() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     workbook = load_workbook(RESULT_FILE, data_only=True, read_only=True)
     rows = list(workbook.active.iter_rows(values_only=True))
@@ -45,8 +39,8 @@ def read_result() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     times_h = np.asarray([row[0] for row in rows[1:]], dtype=float) / 3600.0
     moisture = np.asarray([row[1:] for row in rows[1:]], dtype=float)
     return times_h, radius_cm, moisture
-
-
+ 
+ 
 def threshold_times_from_output(
     times_h: np.ndarray,
     maximum_moisture: np.ndarray,
@@ -67,14 +61,14 @@ def threshold_times_from_output(
         (previous_value - threshold) / (previous_value - current_value)
     ) * float(times_h[index] - times_h[index - 1])
     return crossing, float(times_h[index])
-
-
+ 
+ 
 def save_figure(figure: plt.Figure, name: str) -> None:
     FIGURE_DIR.mkdir(parents=True, exist_ok=True)
     figure.savefig(FIGURE_DIR / f"{name}.png", dpi=300, bbox_inches="tight")
     plt.close(figure)
-
-
+ 
+ 
 def main() -> None:
     boundary_time, room_temperature, room_moisture = read_boundary()
     times, radius_cm, moisture = read_result()
@@ -85,7 +79,7 @@ def main() -> None:
     continuous_threshold_time, discrete_threshold_time = threshold_times_from_output(
         times, maximum_moisture
     )
-
+ 
     # 1. 附件一原始边界
     figure, axis_temperature = plt.subplots(figsize=(7.2, 4.2))
     axis_moisture = axis_temperature.twinx()
@@ -95,7 +89,7 @@ def main() -> None:
     axis_moisture.set_ylabel("水分浓度 / kg·kg$^{-1}$")
     axis_temperature.grid(alpha=0.25)
     save_figure(figure, "烘房边界原始数据")
-
+ 
     # 2. 最后 1 h 稳定段
     stable = boundary_time >= boundary_time[-1] - 1.0
     figure, axis_temperature = plt.subplots(figsize=(7.2, 4.2))
@@ -110,7 +104,7 @@ def main() -> None:
     axis_moisture.set_ylabel("水分浓度 / kg·kg$^{-1}$")
     axis_temperature.grid(alpha=0.25)
     save_figure(figure, "烘房边界稳定段")
-
+ 
     # 3. 4 h 后边界平台与末点敏感性对照
     stable_temperature = room_temperature[stable].mean()
     stable_moisture = room_moisture[stable].mean()
@@ -130,7 +124,7 @@ def main() -> None:
     axis_temperature.grid(alpha=0.25)
     axis_temperature.legend(loc="center right", fontsize=9)
     save_figure(figure, "烘房边界延拓对比")
-
+ 
     # 4. 每隔 6 h 的径向剖面
     # 只选取少量具有代表性的时刻，避免 90 余条曲线和图例相互遮挡。
     selected_hours = np.array(
@@ -148,9 +142,9 @@ def main() -> None:
     axis.axhline(CRITICAL_MOISTURE, color="black", ls="--", lw=1.0, label="阈值 0.15")
     axis.set(xlabel="到药材中心的距离 / cm", ylabel="含水率 / kg·kg$^{-1}$", title="含水率径向剖面")
     axis.grid(alpha=0.25)
-    axis.legend(ncol=3, fontsize=8)
+    axis.legend(ncol=3, fontsize=8, loc="upper right")
     save_figure(figure, "含水率径向剖面")
-
+ 
     # 5. 中心、表面含水率轨迹
     figure, axis = plt.subplots(figsize=(7.2, 4.2))
     axis.plot(times, center_moisture, label="中心", color="#d62728")
@@ -172,7 +166,7 @@ def main() -> None:
     axis.grid(alpha=0.25)
     axis.legend()
     save_figure(figure, "中心表面含水率轨迹")
-
+ 
     # 6. 阈值前后径向剖面对照
     before_index = max(threshold_index - 1, 0)
     figure, axis = plt.subplots(figsize=(7.2, 4.2))
@@ -185,7 +179,7 @@ def main() -> None:
     axis.grid(alpha=0.25)
     axis.legend()
     save_figure(figure, "阈值前后剖面")
-
+ 
     # 7. 全域最大含水率与阈值
     figure, axis = plt.subplots(figsize=(7.2, 4.2))
     axis.plot(times, maximum_moisture, color="#2c3e50")
@@ -206,7 +200,7 @@ def main() -> None:
     axis.grid(alpha=0.25)
     axis.legend()
     save_figure(figure, "全域最大含水率下降")
-
+ 
     # 8. 含水率时空热图
     figure, axis = plt.subplots(figsize=(7.2, 4.2))
     image = axis.imshow(
@@ -218,7 +212,7 @@ def main() -> None:
     axis.axvline(discrete_threshold_time, color="black", ls="--", lw=1.0)
     axis.set(xlabel="时间 / h", ylabel="到药材中心的距离 / cm", title="含水率时空分布")
     save_figure(figure, "含水率时空分布")
-
+ 
     # 9. 阈值交点局部放大
     left = max(threshold_index - 20, 0)
     right = min(threshold_index + 20, len(times) - 1)
@@ -245,7 +239,7 @@ def main() -> None:
     axis.grid(alpha=0.25)
     axis.legend(fontsize=8)
     save_figure(figure, "达标时间阈值判定")
-
+ 
     # 10. 已复算边界情景的达标时间比较
     if DIAGNOSTICS_FILE.exists():
         with DIAGNOSTICS_FILE.open("r", encoding="utf-8") as stream:
@@ -288,9 +282,9 @@ def main() -> None:
                     fontsize=8,
                 )
         save_figure(figure, "长期边界情景敏感性")
-
+ 
     print(f"已生成 {len(list(FIGURE_DIR.glob('*.png')))} 张 PNG 图：{FIGURE_DIR}")
-
-
+ 
+ 
 if __name__ == "__main__":
     main()
