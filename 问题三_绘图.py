@@ -144,8 +144,19 @@ def drying_phase_rates(data: dict[str, object]) -> tuple[float, float]:
     return (INITIAL_MOISTURE - c12) / 12.0, (c36 - CRITICAL_MOISTURE) / (target - 36.0)
 
 
-def _style_axis(axis: plt.Axes) -> None:
-    axis.grid(False)
+def _style_axis(axis: plt.Axes, *, show_grid: bool = True) -> None:
+    axis.set_axisbelow(True)
+    if show_grid:
+        axis.grid(
+            True,
+            which="major",
+            color="#C8C3C5",
+            linestyle="--",
+            linewidth=0.45,
+            alpha=0.55,
+        )
+    else:
+        axis.grid(False)
     axis.tick_params(length=3, width=0.7)
     for name in ("left", "bottom"):
         axis.spines[name].set_color(COLOR_DARK)
@@ -220,9 +231,13 @@ def plot_threshold_evidence(data: dict[str, object]) -> plt.Figure:
     axes[1].axvline(target, color=COLOR_CORAL, lw=1.35)
     axes[1].annotate(
         f"$t_*= {target:.4f}$ h", xy=(target, CRITICAL_MOISTURE),
-        xytext=(target - 0.19, CRITICAL_MOISTURE + 0.00008),
+        xycoords="data", xytext=(0.12, 0.70), textcoords="axes fraction",
         arrowprops={"arrowstyle": "-", "color": COLOR_CORAL, "lw": 0.8},
-        color=COLOR_CORAL, fontsize=7.5,
+        bbox={
+            "boxstyle": "round,pad=0.2", "facecolor": "white",
+            "edgecolor": "none", "alpha": 0.9,
+        },
+        color=COLOR_CORAL, fontsize=7.5, zorder=5,
     )
     axes[1].set(xlabel="时间 / h", ylabel="轴心含水率 / kg·kg$^{-1}$", title="阈值附近")
     axes[1].ticklabel_format(axis="y", style="plain", useOffset=False)
@@ -254,8 +269,8 @@ def plot_field_evolution(data: dict[str, object]) -> plt.Figure:
         axes[1].plot(radii, moisture[index], color=color, lw=1.45, label=label)
     axes[1].axhline(CRITICAL_MOISTURE, color=COLOR_DARK, ls="--", lw=0.9)
     axes[1].set(xlabel="径向位置 / cm", ylabel="含水率 / kg·kg$^{-1}$", title="代表时刻径向剖面")
-    for axis in axes:
-        _style_axis(axis)
+    _style_axis(axes[0], show_grid=False)
+    _style_axis(axes[1])
     handles, labels = axes[1].get_legend_handles_labels()
     figure.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.86), ncol=6)
     _set_top_title(figure, "含水率由表面向轴心逐步衰减", y=0.985)

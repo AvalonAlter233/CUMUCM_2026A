@@ -223,8 +223,19 @@ def shrinkage_consistency_statistics(
     return statistics
 
 
-def _style_axis(axis: plt.Axes) -> None:
-    axis.grid(False)
+def _style_axis(axis: plt.Axes, *, show_grid: bool = True) -> None:
+    axis.set_axisbelow(True)
+    if show_grid:
+        axis.grid(
+            True,
+            which="major",
+            color="#C8C3C5",
+            linestyle="--",
+            linewidth=0.45,
+            alpha=0.55,
+        )
+    else:
+        axis.grid(False)
     axis.tick_params(length=3, width=0.7)
     for name in ("left", "bottom"):
         axis.spines[name].set_color(COLOR_DARK)
@@ -352,8 +363,8 @@ def plot_moving_field(data: dict[str, object]) -> plt.Figure:
         axes[1].plot(physical_radii, profile, color=color, lw=1.45, label=label)
     axes[1].axhline(CRITICAL_MOISTURE, color=COLOR_DARK, ls="--", lw=0.9)
     axes[1].set(xlabel="实际径向位置 / cm", ylabel="含水率 / kg·kg$^{-1}$", title="收缩中的径向剖面")
-    for axis in axes:
-        _style_axis(axis)
+    _style_axis(axes[0], show_grid=False)
+    _style_axis(axes[1])
     handles, labels = axes[1].get_legend_handles_labels()
     figure.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.86), ncol=6)
     _set_top_title(figure, "收缩缩短扩散路径并保持轴心最湿", y=0.985)
