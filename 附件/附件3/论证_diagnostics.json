@@ -1,0 +1,124 @@
+{
+  "scope": "S 级论证：能量自洽性 + 全域最大值性质（只读，不修改任何求解代码）",
+  "argument_A_energy_consistency": {
+    "heat_supply_upper_bound": {
+      "1800": 329691.75000000006,
+      "10800": 4960929.75
+    },
+    "rho_d": {
+      "dry_basis": 275.0422535211268,
+      "rho_at_zero": 650.0
+    },
+    "periods": {
+      "1800": {
+        "t_s": 1800.0,
+        "Q_sen_enthalpy": 130442.82698719621,
+        "Q_in_boundary_flux": 184960.34625,
+        "Q_ub": 329691.75000000006,
+        "dCbar": 0.2664888750000003,
+        "Tbar_end": 33.774665500000005,
+        "Q_lat_dry": 1746636.5481173259,
+        "ratio_dry": 9.443302759373623,
+        "ratio_ub_dry": 5.29778663893569,
+        "Q_lat_zero": 4127779.4293125044,
+        "ratio_zero": 22.317104790305855,
+        "ratio_ub_zero": 12.520117440950536,
+        "Q_lat_rigorous": 1126795.8339572332,
+        "ratio_rigorous": 6.092094099100624,
+        "ratio_ub_rigorous": 3.41772529630248
+      },
+      "10800": {
+        "t_s": 10800.0,
+        "Q_sen_enthalpy": 317581.34792388993,
+        "Q_in_boundary_flux": 666527.865,
+        "Q_ub": 4960929.75,
+        "dCbar": 1.1657537500000001,
+        "Tbar_end": 49.904297750000005,
+        "Q_lat_dry": 7640649.561280284,
+        "ratio_dry": 11.463361042347845,
+        "ratio_ub_dry": 1.5401648373029841,
+        "Q_lat_zero": 18056942.710625004,
+        "ratio_zero": 27.091054491210212,
+        "ratio_ub_zero": 3.6398303585381355,
+        "Q_lat_rigorous": 5315921.5541393645,
+        "ratio_rigorous": 7.975542859171184,
+        "ratio_ub_rigorous": 1.0715575148266037
+      }
+    },
+    "surface_equilibrium_scenarios": {
+      "6.0": {
+        "t_h": 6.0,
+        "C_s": 0.5333063786528913,
+        "dC_surface": 0.4833188376528913,
+        "Ts_dry": 39.86198775274505,
+        "D_ratio_dry": 0.6798811443694615,
+        "q_lat_dry": 253.42366618137385,
+        "Ts_zero": 26.04255956536173,
+        "D_ratio_zero": 0.38521412527761245,
+        "q_lat_zero": 598.9093708659568
+      },
+      "12.0": {
+        "t_h": 12.0,
+        "C_s": 0.1644772550191507,
+        "dC_surface": 0.1144897140191507,
+        "Ts_dry": 47.59767040559905,
+        "D_ratio_dry": 0.9146683439202536,
+        "q_lat_dry": 60.03159986002387,
+        "Ts_zero": 44.32409143904117,
+        "D_ratio_zero": 0.8081862756744789,
+        "q_lat_zero": 141.87107402397078
+      },
+      "18.0": {
+        "t_h": 18.0,
+        "C_s": 0.08453796310437971,
+        "dC_surface": 0.034550422104379704,
+        "Ts_dry": 49.274286903922544,
+        "D_ratio_dry": 0.9735786175760532,
+        "q_lat_dry": 18.11618740193646,
+        "Ts_zero": 48.28639435780548,
+        "D_ratio_zero": 0.9384974471826907,
+        "q_lat_zero": 42.813501054863146
+      },
+      "24.0": {
+        "t_h": 24.0,
+        "C_s": 0.06648004676901179,
+        "dC_surface": 0.016492505769011782,
+        "Ts_dry": 49.6530268167742,
+        "D_ratio_dry": 0.9873143954167606,
+        "q_lat_dry": 8.647689580645133,
+        "Ts_zero": 49.181460262050855,
+        "D_ratio_zero": 0.9702364559583663,
+        "q_lat_zero": 20.436853448728638
+      }
+    }
+  },
+  "argument_B_max_principle": {
+    "problem3": {
+      "n_records": 3452,
+      "n_center_controlled": 3452,
+      "n_exact_ties_early": 2,
+      "max_backward_jump": 0.0,
+      "min_forward_drop": -0.007387303147003976,
+      "min_cell_value": 0.05264557188751203,
+      "C_inf_range": [
+        0.01963,
+        0.05025
+      ],
+      "t60_s": 207120.0,
+      "Cmax_at_t60": 0.1499885403701769
+    },
+    "problem4": {
+      "n_records": 3067,
+      "n_center_controlled": 3067,
+      "n_exact_ties_early": 29,
+      "max_backward_jump": 1.7763568394002505e-15,
+      "min_cell_value": 0.09359971815564565,
+      "internal_field_key": "moisture",
+      "internal_n_center_controlled": 3067,
+      "internal_n_records": 3067,
+      "internal_n_exact_ties_early": 30,
+      "internal_max_backward_jump": 2.220446049250313e-15,
+      "internal_min_cell_value": 0.05566746183173578
+    }
+  }
+}
