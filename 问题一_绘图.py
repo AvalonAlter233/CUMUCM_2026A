@@ -33,11 +33,11 @@ RESULT_ONE = PROJECT_ROOT / "附件" / "附件3" / "result1.xlsx"
 FIGURE_DIR = PROJECT_ROOT / "figures" / "问题一"
 
 CJK_FONT_CANDIDATES = (
-    "SimSun",
+    "Microsoft YaHei",
     "DengXian",
     "Source Han Serif SC",
     "Arial Unicode MS",
-    "Microsoft YaHei",
+    "SimSun",
     "SimHei",
     "PingFang SC",
     "Heiti SC",
@@ -299,7 +299,7 @@ def plot_boundary_conditions(data: dict[str, object]) -> plt.Figure:
         axis.set_ylabel(ylabel)
         axis.set_xlim(0.0, 0.5)
         _style_axis(axis)
-    figure.suptitle("实测边界条件", x=0.5, y=0.96, fontsize=10.5, fontweight="bold")
+    figure.suptitle("实测边界条件", x=0.5, y=0.96, fontsize=12, fontweight="bold")
     figure.subplots_adjust(wspace=0.30, bottom=0.21, top=0.73, left=0.09, right=0.98)
     return figure
 
@@ -352,7 +352,7 @@ def plot_main_response(data: dict[str, object]) -> plt.Figure:
         "含水率",
     )
     handles, labels = axes[0].get_legend_handles_labels()
-    figure.suptitle("药材内部温湿响应", x=0.5, y=0.97, fontsize=10.5, fontweight="bold")
+    figure.suptitle("药材内部温湿响应", x=0.5, y=0.97, fontsize=12, fontweight="bold")
     figure.legend(
         handles,
         labels,
@@ -415,7 +415,7 @@ def plot_field_evolution(data: dict[str, object]) -> plt.Figure:
         axis.set_xlim(radii_cm[0], radii_cm[-1])
         axis.set_ylim(times_h[0], times_h[-1])
         axis.grid(False)
-    figure.suptitle("热湿场时空演化", x=0.5, y=0.97, fontsize=10.5, fontweight="bold")
+    figure.suptitle("热湿场时空演化", x=0.5, y=0.97, fontsize=12, fontweight="bold")
     figure._alignment_exclude_axes = colorbars
     # colorbar 会把两个热图拆为独立子网格，因此显式声明它们属于同一行。
     figure._alignment_row_groups = [["a", "b"]]
@@ -457,7 +457,7 @@ def plot_radial_profiles(data: dict[str, object]) -> plt.Figure:
         axis.set_ylabel(ylabel)
         axis.set_xlim(radii_cm[0], radii_cm[-1])
         _style_axis(axis)
-    figure.suptitle("关键时刻径向剖面", x=0.5, y=0.97, fontsize=10.5, fontweight="bold")
+    figure.suptitle("关键时刻径向剖面", x=0.5, y=0.97, fontsize=12, fontweight="bold")
     figure.legend(
         handles=lines,
         labels=[f"{value:g} s" for value in SNAPSHOT_TIMES],
@@ -552,7 +552,7 @@ def plot_numerical_validation(data: dict[str, object]) -> plt.Figure:
             color=COLOR_TEAL,
         )
         _style_axis(axis)
-    figure.suptitle("数值收敛验证", x=0.5, y=0.97, fontsize=10.5, fontweight="bold")
+    figure.suptitle("数值收敛验证", x=0.5, y=0.97, fontsize=12, fontweight="bold")
     figure.subplots_adjust(
         wspace=0.34,
         hspace=0.38,

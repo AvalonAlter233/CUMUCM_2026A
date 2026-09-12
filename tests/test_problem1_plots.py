@@ -102,9 +102,9 @@ def test_main_response_figure_keeps_only_two_nonredundant_panels():
     plotting.close_without_export(figure)
 
 
-def test_style_prefers_simsun_and_disables_gridlines():
-    assert plotting.CJK_FONT_CANDIDATES[0] == "SimSun"
-    assert plotting.mpl.rcParams["font.sans-serif"][0] == "SimSun"
+def test_style_prefers_microsoft_yahei_and_disables_gridlines():
+    assert plotting.CJK_FONT_CANDIDATES[0] == "Microsoft YaHei"
+    assert plotting.mpl.rcParams["font.sans-serif"][0] == "Microsoft YaHei"
     figure, axis = plotting.plt.subplots()
     plotting._style_axis(axis)
     assert not any(line.get_visible() for line in axis.get_ygridlines())
@@ -170,6 +170,7 @@ def test_figures_use_top_titles_without_panel_letters():
         assert figure._suptitle is not None
         assert figure._suptitle.get_text().strip()
         assert figure._suptitle.get_fontweight() == "bold"
+        assert figure._suptitle.get_fontsize() >= 12
         axis_text = [text.get_text() for axis in figure.axes for text in axis.texts]
         assert not ({"a", "b", "c", "d"} & set(axis_text))
         plotting.close_without_export(figure)
