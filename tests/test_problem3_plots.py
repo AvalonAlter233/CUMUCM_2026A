@@ -1,4 +1,5 @@
 from pathlib import Path
+import warnings
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -19,12 +20,27 @@ def test_publication_contract_is_five_png_figures_at_600_dpi():
     assert len(set(plotting.NEW_FIGURE_BASES)) == 5
     assert plotting.FIGURE_FORMATS == ("png",)
     assert plotting.EXPORT_DPI == 600
-    assert plotting.CJK_FONT_CANDIDATES[0] == "Microsoft YaHei"
+    assert plotting.CJK_FONT_CANDIDATES[0] == "STSong"
+    assert plotting.mpl.rcParams["font.family"] == ["serif"]
+    assert plotting.mpl.rcParams["font.serif"][:2] == ["STSong", "SimSun"]
+    assert plotting.mpl.rcParams["mathtext.fontset"] == "stix"
+    assert plotting.mpl.rcParams["axes.titleweight"] == "bold"
+    assert plotting.mpl.rcParams["axes.labelweight"] == "bold"
     assert plotting.mpl.rcParams["svg.fonttype"] == "none"
     assert plotting.mpl.rcParams["pdf.fonttype"] == 42
     assert plotting.REFERENCE_PALETTE == (
         "#44757A", "#452A3D", "#D44C3C", "#EED5B7"
     )
+
+
+def test_academic_font_renders_chinese_without_missing_glyph_warnings():
+    figure, axis = plt.subplots()
+    axis.set_title("问题三含水率，温度：50 ℃；参数 σ·φξ→达标")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        figure.canvas.draw()
+    assert not [warning for warning in caught if "missing from font" in str(warning.message)]
+    plotting.close_without_export(figure)
 
 
 def test_loaded_result_matches_reported_threshold_and_center_control():
@@ -56,14 +72,17 @@ def test_core_figures_are_compact_and_use_moisture_heatmap_palette():
     plotting.close_without_export(field)
 
 
-def test_threshold_annotation_uses_stable_axes_position_and_background_box():
+def test_threshold_annotation_uses_clear_upper_right_axes_position():
     figure = plotting.plot_threshold_evidence(plotting.load_plot_data())
     annotation = next(
         text for text in figure.axes[1].texts if "t_*" in text.get_text()
     )
     assert annotation.xycoords == "data"
     assert annotation._textcoords == "axes fraction"
-    assert annotation.get_bbox_patch() is not None
+    text_x, text_y = annotation.get_position()
+    assert text_x > 0.60
+    assert text_y > 0.65
+    assert annotation.get_bbox_patch() is None
     plotting.close_without_export(figure)
 
 

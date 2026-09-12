@@ -57,7 +57,12 @@ def test_publication_contract_is_five_png_figures_at_600_dpi():
     assert len(set(plotting.NEW_FIGURE_BASES)) == 5
     assert plotting.FIGURE_FORMATS == ("png",)
     assert plotting.EXPORT_DPI == 600
-    assert plotting.CJK_FONT_CANDIDATES[0] == "Microsoft YaHei"
+    assert plotting.CJK_FONT_CANDIDATES[0] == "STSong"
+    assert plotting.mpl.rcParams["font.family"] == ["serif"]
+    assert plotting.mpl.rcParams["font.serif"][:2] == ["STSong", "SimSun"]
+    assert plotting.mpl.rcParams["mathtext.fontset"] == "stix"
+    assert plotting.mpl.rcParams["axes.titleweight"] == "bold"
+    assert plotting.mpl.rcParams["axes.labelweight"] == "bold"
     assert plotting.mpl.rcParams["svg.fonttype"] == "none"
     assert plotting.mpl.rcParams["pdf.fonttype"] == 42
     assert plotting.REFERENCE_PALETTE == (

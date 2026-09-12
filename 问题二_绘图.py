@@ -32,32 +32,25 @@ RESULT_TWO = PROJECT_ROOT / "附件" / "附件3" / "result2.xlsx"
 FIGURE_DIR = PROJECT_ROOT / "figures" / "问题二"
 
 CJK_FONT_CANDIDATES = (
-    "Microsoft YaHei",
-    "DengXian",
-    "Source Han Serif SC",
-    "Arial Unicode MS",
-    "SimSun",
-    "SimHei",
-    "PingFang SC",
-    "Heiti SC",
-    "STHeiti",
-    "Noto Sans CJK SC",
-    "Source Han Sans SC",
-    "WenQuanYi Zen Hei",
+    "STSong", "SimSun", "Source Han Serif SC", "Noto Serif CJK SC",
 )
 INSTALLED_FONTS = {font.name for font in font_manager.fontManager.ttflist}
 AVAILABLE_CJK_FONTS = [name for name in CJK_FONT_CANDIDATES if name in INSTALLED_FONTS]
 if not AVAILABLE_CJK_FONTS:
     print("提示：本机未检测到中文字体，图中中文可能显示为方框。")
+HEADING_FONT = "STZhongsong" if "STZhongsong" in INSTALLED_FONTS else AVAILABLE_CJK_FONTS[0]
 
 mpl.rcParams.update(
     {
-        "font.family": "sans-serif",
-        "font.sans-serif": AVAILABLE_CJK_FONTS + ["Arial", "DejaVu Sans"],
+        "font.family": "serif",
+        "font.serif": [*AVAILABLE_CJK_FONTS, "Times New Roman", "Times", "DejaVu Serif"],
+        "mathtext.fontset": "stix",
         "axes.unicode_minus": False,
         "font.size": 8,
         "axes.titlesize": 9.2,
+        "axes.titleweight": "bold",
         "axes.labelsize": 8,
+        "axes.labelweight": "bold",
         "legend.fontsize": 7.3,
         "xtick.labelsize": 7.5,
         "ytick.labelsize": 7.5,
@@ -66,6 +59,8 @@ mpl.rcParams.update(
         "axes.linewidth": 0.7,
         "legend.frameon": False,
         "figure.dpi": 120,
+        "svg.fonttype": "none",
+        "pdf.fonttype": 42,
     }
 )
 
@@ -210,16 +205,34 @@ def close_without_export(figure: plt.Figure) -> None:
     plt.close(figure)
 
 
-def _style_axis(axis: plt.Axes) -> None:
-    axis.grid(False)
+def _style_axis(axis: plt.Axes, *, show_grid: bool = True) -> None:
+    axis.set_axisbelow(True)
+    if show_grid:
+        axis.grid(
+            True,
+            which="major",
+            color="#AAA5A8",
+            linestyle="--",
+            linewidth=0.55,
+            alpha=0.70,
+        )
+    else:
+        axis.grid(False)
     axis.tick_params(length=3, width=0.7)
+    for label in (*axis.get_xticklabels(), *axis.get_yticklabels()):
+        if not any("\u4e00" <= character <= "\u9fff" for character in label.get_text()):
+            label.set_fontfamily("Times New Roman")
+    for text in (axis.title, axis.xaxis.label, axis.yaxis.label):
+        text.set_fontfamily(HEADING_FONT)
+        text.set_fontweight("bold")
     for spine in (axis.spines["left"], axis.spines["bottom"]):
         spine.set_color("#51474D")
         spine.set_linewidth(0.75)
 
 
 def _set_top_title(figure: plt.Figure, title: str, y: float = 0.97) -> None:
-    figure.suptitle(title, x=0.5, y=y, fontsize=12, fontweight="bold")
+    text = figure.suptitle(title, x=0.5, y=y, fontsize=12, fontweight="bold")
+    text.set_fontfamily(HEADING_FONT)
 
 
 def _plot_center_surface(
@@ -297,7 +310,7 @@ def plot_model_comparison(data: dict[str, np.ndarray]) -> plt.Figure:
         variable_lines = _plot_center_surface(axis, q2_t / 3600.0, variable_field, "-", "变物性")
         if axis is axes[0]:
             legend_lines = [variable_lines[0], constant_lines[0], variable_lines[1], constant_lines[1]]
-        axis.set_title(title, pad=6, fontweight="medium")
+        axis.set_title(title, pad=6, fontweight="bold", fontfamily=HEADING_FONT)
         axis.set_xlabel("时间 / h")
         axis.set_ylabel(ylabel)
         axis.set_xlim(0.0, 0.5)
@@ -351,7 +364,7 @@ def plot_property_coupling(data: dict[str, np.ndarray]) -> plt.Figure:
             )
             if axis is axes[0]:
                 lines.append(line)
-        axis.set_title(title, pad=6, fontweight="medium")
+        axis.set_title(title, pad=6, fontweight="bold", fontfamily=HEADING_FONT)
         axis.set_xlabel("时间 / h")
         axis.set_ylabel(ylabel)
         axis.set_xlim(0.0, 3.0)
@@ -407,7 +420,7 @@ def plot_main_response(data: dict[str, np.ndarray]) -> plt.Figure:
             )
             if axis is axes[0]:
                 lines.append(line)
-        axis.set_title(title, pad=6, fontweight="medium")
+        axis.set_title(title, pad=6, fontweight="bold", fontfamily=HEADING_FONT)
         axis.set_xlabel("时间 / h")
         axis.set_ylabel(ylabel)
         axis.set_xlim(0.0, 3.0)
@@ -458,13 +471,18 @@ def plot_field_evolution(data: dict[str, np.ndarray]) -> plt.Figure:
         )
         colorbar = figure.colorbar(mesh, ax=axis, fraction=0.046, pad=0.04)
         colorbar.set_label(colorbar_label, rotation=270, labelpad=12)
+        colorbar.ax.yaxis.label.set_fontfamily(HEADING_FONT)
+        colorbar.ax.yaxis.label.set_fontweight("bold")
+        for tick in colorbar.ax.get_yticklabels():
+            tick.set_fontfamily("Times New Roman")
+        colorbar.ax.grid(False)
         colorbar_axes.append(colorbar.ax)
-        axis.set_title(title, pad=6, fontweight="medium")
+        axis.set_title(title, pad=6, fontweight="bold", fontfamily=HEADING_FONT)
         axis.set_xlabel("半径 r / cm")
         axis.set_ylabel("时间 / h")
         axis.set_xlim(radii_cm[0], radii_cm[-1])
         axis.set_ylim(0.0, 3.0)
-        axis.grid(False)
+        _style_axis(axis, show_grid=False)
     _set_top_title(figure, "热湿场时空演化")
     figure._alignment_exclude_axes = colorbar_axes
     figure._alignment_row_groups = [["a", "b"]]
@@ -503,7 +521,7 @@ def plot_numerical_validation(data: dict[str, np.ndarray]) -> plt.Figure:
         axis.yaxis.set_major_formatter(mticker.FuncFormatter(lambda value, _: f"{value:.0e}"))
         axis.set_xticks(categories, category_labels)
         axis.set_ylabel(ylabel)
-        axis.set_title(title, pad=6, fontweight="medium")
+        axis.set_title(title, pad=6, fontweight="bold", fontfamily=HEADING_FONT)
         axis.set_xlim(-0.15, 1.15)
         _style_axis(axis)
     _set_top_title(figure, "空间与时间离散检验")
