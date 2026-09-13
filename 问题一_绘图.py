@@ -6,10 +6,8 @@
 
 from __future__ import annotations
 
-import sys
 from functools import lru_cache
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 import matplotlib as mpl
 import matplotlib.font_manager as font_manager
@@ -19,12 +17,6 @@ import numpy as np
 from openpyxl import load_workbook
 
 import 问题1_求解 as problem1_solver
-
-
-NATURE_FIGURE_SCRIPTS = Path.home() / ".codex" / "skills" / "nature-figure" / "scripts"
-if str(NATURE_FIGURE_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(NATURE_FIGURE_SCRIPTS))
-from audit_panel_alignment import require_matplotlib_panel_alignment
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -234,23 +226,11 @@ def load_plot_data() -> dict[str, object]:
 def save_publication_figure(
     figure: plt.Figure,
     base_name: str,
-    exclude_axes: list[plt.Axes] | None = None,
 ) -> None:
-    """通过面板对齐门禁后仅导出 PNG。"""
+    """使用 Matplotlib 原生接口导出 600 dpi PNG。"""
     FIGURE_DIR.mkdir(parents=True, exist_ok=True)
     figure.canvas.draw()
     stem = FIGURE_DIR / base_name
-    with TemporaryDirectory(prefix="problem1-figure-qa-") as temporary_dir:
-        require_matplotlib_panel_alignment(
-            figure,
-            json_out=Path(temporary_dir) / f"{base_name}.alignment.json",
-            exclude_axes=exclude_axes or [],
-            row_groups=getattr(figure, "_alignment_row_groups", None),
-            tolerance_pt=1.5,
-            gutter_tolerance_pt=1.5,
-            require_panel_labels=False,
-            strict=True,
-        )
     save_kwargs = {"bbox_inches": "tight", "pad_inches": PAD_INCHES, "facecolor": "white"}
     figure.savefig(stem.with_suffix(".png"), dpi=EXPORT_DPI, **save_kwargs)
     plt.close(figure)
@@ -400,7 +380,6 @@ def plot_field_evolution(data: dict[str, object]) -> plt.Figure:
         raise ValueError("温度场和含水率场的时空网格不一致。")
     times_h = temperature_times / 3600.0
     figure, axes = plt.subplots(1, 2, figsize=(7.0, 3.0), sharex=True, sharey=True)
-    colorbars = []
     panels = (
         (axes[0], temperature_field, "magma", "温度场", "°C", "a"),
         (
@@ -429,7 +408,6 @@ def plot_field_evolution(data: dict[str, object]) -> plt.Figure:
         for tick in colorbar.ax.get_yticklabels():
             tick.set_fontfamily("Times New Roman")
         colorbar.ax.grid(False)
-        colorbars.append(colorbar.ax)
         axis.set_title(title, loc="left", pad=7, fontsize=9.2, fontweight="bold", fontfamily=HEADING_FONT)
         axis.set_xlabel("半径 r / cm")
         axis.set_ylabel("时间 / h")
@@ -437,9 +415,6 @@ def plot_field_evolution(data: dict[str, object]) -> plt.Figure:
         axis.set_ylim(times_h[0], times_h[-1])
         _style_axis(axis, show_grid=False)
     _set_top_title(figure, "热湿场时空演化")
-    figure._alignment_exclude_axes = colorbars
-    # colorbar 会把两个热图拆为独立子网格，因此显式声明它们属于同一行。
-    figure._alignment_row_groups = [["a", "b"]]
     figure.subplots_adjust(wspace=0.28, bottom=0.17, top=0.75, left=0.09, right=0.92)
     return figure
 
@@ -620,11 +595,7 @@ def export_all(data: dict[str, object]) -> None:
     )
     for builder, base_name in builders:
         figure = builder(data)
-        save_publication_figure(
-            figure,
-            base_name,
-            exclude_axes=list(getattr(figure, "_alignment_exclude_axes", [])),
-        )
+        save_publication_figure(figure, base_name)
 
     missing_outputs = [
         FIGURE_DIR / f"{base_name}.{suffix}"

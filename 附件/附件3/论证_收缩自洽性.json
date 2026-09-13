@@ -1,5 +1,5 @@
 {
-  "scope": "附件二实测收缩与问题四模型含水率场的自洽性检验（只读，不修改求解代码）",
+  "scope": "附件二实测收缩与问题四模型含水率场的自洽性检验",
   "ideal_shrinkage_law": "(R/R0)^2 = (phi + C_driver) / (phi + C0),  phi = rho_w / rho_s",
   "input_check_max_radius_deviation_m": 3.469446951953614e-18,
   "moisture_measures": {

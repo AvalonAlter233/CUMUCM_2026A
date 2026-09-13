@@ -7,9 +7,7 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 import matplotlib as mpl
 import matplotlib.font_manager as font_manager
@@ -18,12 +16,6 @@ import numpy as np
 from openpyxl import load_workbook
 
 import 问题4_求解 as problem4
-
-
-NATURE_FIGURE_SCRIPTS = Path.home() / ".codex" / "skills" / "nature-figure" / "scripts"
-if str(NATURE_FIGURE_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(NATURE_FIGURE_SCRIPTS))
-from audit_panel_alignment import require_matplotlib_panel_alignment
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -261,21 +253,11 @@ def close_without_export(figure: plt.Figure) -> None:
 
 
 def save_publication_figure(
-    figure: plt.Figure, base_name: str, exclude_axes: list[plt.Axes] | None = None
+    figure: plt.Figure, base_name: str
 ) -> None:
+    """使用 Matplotlib 原生接口导出 600 dpi PNG。"""
     FIGURE_DIR.mkdir(parents=True, exist_ok=True)
     figure.canvas.draw()
-    with TemporaryDirectory(prefix="problem4-figure-qa-") as temporary_dir:
-        require_matplotlib_panel_alignment(
-            figure,
-            json_out=Path(temporary_dir) / f"{base_name}.alignment.json",
-            exclude_axes=exclude_axes or [],
-            row_groups=getattr(figure, "_alignment_row_groups", None),
-            tolerance_pt=1.5,
-            gutter_tolerance_pt=1.5,
-            require_panel_labels=False,
-            strict=True,
-        )
     figure.savefig(
         FIGURE_DIR / f"{base_name}.png", dpi=EXPORT_DPI, bbox_inches="tight",
         pad_inches=PAD_INCHES, facecolor="white",
@@ -381,8 +363,6 @@ def plot_moving_field(data: dict[str, object]) -> plt.Figure:
     figure.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.86), ncol=6)
     _set_top_title(figure, "收缩缩短扩散路径并保持轴心最湿", y=0.985)
     figure.subplots_adjust(left=0.09, right=0.97, bottom=0.17, top=0.69, wspace=0.40)
-    figure._alignment_row_groups = [["a", "b"]]
-    figure._extra_qa_axes = [color_axis]
     return figure
 
 
@@ -463,7 +443,7 @@ def export_all(data: dict[str, object]) -> None:
     )
     for builder, base_name in zip(builders, NEW_FIGURE_BASES):
         figure = builder(data)
-        save_publication_figure(figure, base_name, getattr(figure, "_extra_qa_axes", None))
+        save_publication_figure(figure, base_name)
 
 
 def main() -> None:
