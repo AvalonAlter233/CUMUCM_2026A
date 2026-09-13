@@ -33,18 +33,7 @@ RESULT_ONE = PROJECT_ROOT / "附件" / "附件3" / "result1.xlsx"
 FIGURE_DIR = PROJECT_ROOT / "figures" / "问题一"
 
 CJK_FONT_CANDIDATES = (
-    "Microsoft YaHei",
-    "DengXian",
-    "Source Han Serif SC",
-    "Arial Unicode MS",
-    "SimSun",
-    "SimHei",
-    "PingFang SC",
-    "Heiti SC",
-    "STHeiti",
-    "Noto Sans CJK SC",
-    "Source Han Sans SC",
-    "WenQuanYi Zen Hei",
+    "STSong", "SimSun", "Source Han Serif SC", "Noto Serif CJK SC",
 )
 INSTALLED_FONTS = {font.name for font in font_manager.fontManager.ttflist}
 AVAILABLE_CJK_FONTS = [
@@ -52,15 +41,19 @@ AVAILABLE_CJK_FONTS = [
 ]
 if not AVAILABLE_CJK_FONTS:
     print("提示：本机未检测到中文字体，图中中文可能显示为方框。")
+HEADING_FONT = "STZhongsong" if "STZhongsong" in INSTALLED_FONTS else AVAILABLE_CJK_FONTS[0]
 
 mpl.rcParams.update(
     {
-        "font.family": "sans-serif",
-        "font.sans-serif": AVAILABLE_CJK_FONTS + ["Arial", "DejaVu Sans"],
+        "font.family": "serif",
+        "font.serif": [*AVAILABLE_CJK_FONTS, "Times New Roman", "Times", "DejaVu Serif"],
+        "mathtext.fontset": "stix",
         "axes.unicode_minus": False,
         "font.size": 8,
         "axes.titlesize": 9.5,
+        "axes.titleweight": "bold",
         "axes.labelsize": 8,
+        "axes.labelweight": "bold",
         "legend.fontsize": 7.5,
         "xtick.labelsize": 7.5,
         "ytick.labelsize": 7.5,
@@ -69,6 +62,8 @@ mpl.rcParams.update(
         "axes.linewidth": 0.7,
         "legend.frameon": False,
         "figure.dpi": 120,
+        "svg.fonttype": "none",
+        "pdf.fonttype": 42,
     }
 )
 
@@ -266,13 +261,34 @@ def close_without_export(figure: plt.Figure) -> None:
     plt.close(figure)
 
 
-def _style_axis(axis: plt.Axes) -> None:
-    axis.grid(False)
+def _style_axis(axis: plt.Axes, *, show_grid: bool = True) -> None:
     axis.set_axisbelow(True)
+    if show_grid:
+        axis.grid(
+            True,
+            which="major",
+            color="#AAA5A8",
+            linestyle="--",
+            linewidth=0.55,
+            alpha=0.70,
+        )
+    else:
+        axis.grid(False)
     axis.tick_params(length=3, width=0.7)
+    for label in (*axis.get_xticklabels(), *axis.get_yticklabels()):
+        if not any("\u4e00" <= character <= "\u9fff" for character in label.get_text()):
+            label.set_fontfamily("Times New Roman")
+    for text in (axis.title, axis.xaxis.label, axis.yaxis.label):
+        text.set_fontfamily(HEADING_FONT)
+        text.set_fontweight("bold")
     for spine in (axis.spines["left"], axis.spines["bottom"]):
         spine.set_color("#51474D")
         spine.set_linewidth(0.75)
+
+
+def _set_top_title(figure: plt.Figure, title: str, y: float = 0.97) -> None:
+    text = figure.suptitle(title, x=0.5, y=y, fontsize=12, fontweight="bold")
+    text.set_fontfamily(HEADING_FONT)
 
 
 def plot_boundary_conditions(data: dict[str, object]) -> plt.Figure:
@@ -294,12 +310,12 @@ def plot_boundary_conditions(data: dict[str, object]) -> plt.Figure:
     )
     for axis, values, ylabel, title, color, label in series:
         axis.plot(boundary_times_h, values, color=color, linewidth=1.7)
-        axis.set_title(title, loc="left", pad=7, fontsize=9.2, fontweight="medium")
+        axis.set_title(title, loc="left", pad=7, fontsize=9.2, fontweight="bold", fontfamily=HEADING_FONT)
         axis.set_xlabel("时间 / h")
         axis.set_ylabel(ylabel)
         axis.set_xlim(0.0, 0.5)
         _style_axis(axis)
-    figure.suptitle("实测边界条件", x=0.5, y=0.96, fontsize=12, fontweight="bold")
+    _set_top_title(figure, "实测边界条件", y=0.96)
     figure.subplots_adjust(wspace=0.30, bottom=0.21, top=0.73, left=0.09, right=0.98)
     return figure
 
@@ -325,7 +341,7 @@ def _plot_position_trajectories(
             linestyle=linestyle,
             label=label,
         )
-    axis.set_title(title, loc="left", pad=7, fontsize=9.2, fontweight="medium")
+    axis.set_title(title, loc="left", pad=7, fontsize=9.2, fontweight="bold", fontfamily=HEADING_FONT)
     axis.set_xlabel("时间 / h")
     axis.set_ylabel(ylabel)
     axis.set_xlim(times_h[0], times_h[-1] + 0.045)
@@ -352,7 +368,7 @@ def plot_main_response(data: dict[str, object]) -> plt.Figure:
         "含水率",
     )
     handles, labels = axes[0].get_legend_handles_labels()
-    figure.suptitle("药材内部温湿响应", x=0.5, y=0.97, fontsize=12, fontweight="bold")
+    _set_top_title(figure, "药材内部温湿响应")
     figure.legend(
         handles,
         labels,
@@ -408,14 +424,19 @@ def plot_field_evolution(data: dict[str, object]) -> plt.Figure:
         )
         colorbar = figure.colorbar(mesh, ax=axis, fraction=0.046, pad=0.04)
         colorbar.set_label(colorbar_label, rotation=270, labelpad=13)
+        colorbar.ax.yaxis.label.set_fontfamily(HEADING_FONT)
+        colorbar.ax.yaxis.label.set_fontweight("bold")
+        for tick in colorbar.ax.get_yticklabels():
+            tick.set_fontfamily("Times New Roman")
+        colorbar.ax.grid(False)
         colorbars.append(colorbar.ax)
-        axis.set_title(title, loc="left", pad=7, fontsize=9.2, fontweight="medium")
+        axis.set_title(title, loc="left", pad=7, fontsize=9.2, fontweight="bold", fontfamily=HEADING_FONT)
         axis.set_xlabel("半径 r / cm")
         axis.set_ylabel("时间 / h")
         axis.set_xlim(radii_cm[0], radii_cm[-1])
         axis.set_ylim(times_h[0], times_h[-1])
-        axis.grid(False)
-    figure.suptitle("热湿场时空演化", x=0.5, y=0.97, fontsize=12, fontweight="bold")
+        _style_axis(axis, show_grid=False)
+    _set_top_title(figure, "热湿场时空演化")
     figure._alignment_exclude_axes = colorbars
     # colorbar 会把两个热图拆为独立子网格，因此显式声明它们属于同一行。
     figure._alignment_row_groups = [["a", "b"]]
@@ -452,12 +473,12 @@ def plot_radial_profiles(data: dict[str, object]) -> plt.Figure:
             )
             if axis is axes[0]:
                 lines.append(line)
-        axis.set_title(title, loc="left", pad=7, fontsize=9.2, fontweight="medium")
+        axis.set_title(title, loc="left", pad=7, fontsize=9.2, fontweight="bold", fontfamily=HEADING_FONT)
         axis.set_xlabel("半径 r / cm")
         axis.set_ylabel(ylabel)
         axis.set_xlim(radii_cm[0], radii_cm[-1])
         _style_axis(axis)
-    figure.suptitle("关键时刻径向剖面", x=0.5, y=0.97, fontsize=12, fontweight="bold")
+    _set_top_title(figure, "关键时刻径向剖面")
     figure.legend(
         handles=lines,
         labels=[f"{value:g} s" for value in SNAPSHOT_TIMES],
@@ -537,7 +558,7 @@ def plot_numerical_validation(data: dict[str, object]) -> plt.Figure:
     for axis, values, title, ylabel, comparison, label in panels:
         axis.semilogy(times_h, values, color=COLOR_TEAL, linewidth=1.45)
         axis.yaxis.set_major_formatter(mticker.FuncFormatter(lambda value, _: f"{value:.0e}"))
-        axis.set_title(title, loc="left", pad=7, fontsize=9.2, fontweight="medium")
+        axis.set_title(title, loc="left", pad=7, fontsize=9.2, fontweight="bold", fontfamily=HEADING_FONT)
         axis.set_xlabel("时间 / h")
         axis.set_ylabel(ylabel)
         axis.set_xlim(times_h[0], times_h[-1])
@@ -552,7 +573,7 @@ def plot_numerical_validation(data: dict[str, object]) -> plt.Figure:
             color=COLOR_TEAL,
         )
         _style_axis(axis)
-    figure.suptitle("数值收敛验证", x=0.5, y=0.97, fontsize=12, fontweight="bold")
+    _set_top_title(figure, "数值收敛验证")
     figure.subplots_adjust(
         wspace=0.34,
         hspace=0.38,

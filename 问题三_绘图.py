@@ -39,19 +39,22 @@ PAD_INCHES = 0.06
 FIGURE_FORMATS = ("png",)
 
 CJK_FONT_CANDIDATES = (
-    "Microsoft YaHei", "DengXian", "Source Han Sans SC", "Arial Unicode MS",
-    "SimSun", "SimHei", "PingFang SC", "Noto Sans CJK SC", "DejaVu Sans",
+    "STSong", "SimSun", "Source Han Serif SC", "Noto Serif CJK SC",
 )
 INSTALLED_FONTS = {font.name for font in font_manager.fontManager.ttflist}
 AVAILABLE_CJK_FONTS = [name for name in CJK_FONT_CANDIDATES if name in INSTALLED_FONTS]
+HEADING_FONT = "STZhongsong" if "STZhongsong" in INSTALLED_FONTS else AVAILABLE_CJK_FONTS[0]
 
 mpl.rcParams.update({
-    "font.family": "sans-serif",
-    "font.sans-serif": AVAILABLE_CJK_FONTS + ["Arial", "DejaVu Sans"],
+    "font.family": "serif",
+    "font.serif": [*AVAILABLE_CJK_FONTS, "Times New Roman", "Times", "DejaVu Serif"],
+    "mathtext.fontset": "stix",
     "axes.unicode_minus": False,
     "font.size": 8,
     "axes.titlesize": 9.2,
+    "axes.titleweight": "bold",
     "axes.labelsize": 8,
+    "axes.labelweight": "bold",
     "legend.fontsize": 7.2,
     "xtick.labelsize": 7.5,
     "ytick.labelsize": 7.5,
@@ -144,16 +147,34 @@ def drying_phase_rates(data: dict[str, object]) -> tuple[float, float]:
     return (INITIAL_MOISTURE - c12) / 12.0, (c36 - CRITICAL_MOISTURE) / (target - 36.0)
 
 
-def _style_axis(axis: plt.Axes) -> None:
-    axis.grid(False)
+def _style_axis(axis: plt.Axes, *, show_grid: bool = True) -> None:
+    axis.set_axisbelow(True)
+    if show_grid:
+        axis.grid(
+            True,
+            which="major",
+            color="#AAA5A8",
+            linestyle="--",
+            linewidth=0.55,
+            alpha=0.70,
+        )
+    else:
+        axis.grid(False)
     axis.tick_params(length=3, width=0.7)
+    for label in (*axis.get_xticklabels(), *axis.get_yticklabels()):
+        if not any("\u4e00" <= character <= "\u9fff" for character in label.get_text()):
+            label.set_fontfamily("Times New Roman")
+    for text in (axis.title, axis.xaxis.label, axis.yaxis.label):
+        text.set_fontfamily(HEADING_FONT)
+        text.set_fontweight("bold")
     for name in ("left", "bottom"):
         axis.spines[name].set_color(COLOR_DARK)
         axis.spines[name].set_linewidth(0.75)
 
 
 def _set_top_title(figure: plt.Figure, title: str, y: float = 0.97) -> None:
-    figure.suptitle(title, x=0.5, y=y, fontsize=12, fontweight="bold")
+    text = figure.suptitle(title, x=0.5, y=y, fontsize=12, fontweight="bold")
+    text.set_fontfamily(HEADING_FONT)
 
 
 def close_without_export(figure: plt.Figure) -> None:
@@ -220,9 +241,9 @@ def plot_threshold_evidence(data: dict[str, object]) -> plt.Figure:
     axes[1].axvline(target, color=COLOR_CORAL, lw=1.35)
     axes[1].annotate(
         f"$t_*= {target:.4f}$ h", xy=(target, CRITICAL_MOISTURE),
-        xytext=(target - 0.19, CRITICAL_MOISTURE + 0.00008),
+        xycoords="data", xytext=(0.75, 0.78), textcoords="axes fraction",
         arrowprops={"arrowstyle": "-", "color": COLOR_CORAL, "lw": 0.8},
-        color=COLOR_CORAL, fontsize=7.5,
+        color=COLOR_CORAL, fontsize=7.5, ha="center", va="center", zorder=5,
     )
     axes[1].set(xlabel="时间 / h", ylabel="轴心含水率 / kg·kg$^{-1}$", title="阈值附近")
     axes[1].ticklabel_format(axis="y", style="plain", useOffset=False)
@@ -246,6 +267,8 @@ def plot_field_evolution(data: dict[str, object]) -> plt.Figure:
     axes[0].set(xlabel="时间 / h", ylabel="径向位置 / cm", title="时空分布")
     color_axis = axes[0].inset_axes([1.025, 0.02, 0.045, 0.96])
     figure.colorbar(mesh, cax=color_axis)
+    for label in color_axis.get_yticklabels():
+        label.set_fontfamily("Times New Roman")
     selected = (0.0, 6.0, 12.0, 24.0, 36.0, discrete)
     colors = mpl.colormaps["viridis"](np.linspace(0.08, 0.90, len(selected)))
     for hour, color in zip(selected, colors):
@@ -254,8 +277,8 @@ def plot_field_evolution(data: dict[str, object]) -> plt.Figure:
         axes[1].plot(radii, moisture[index], color=color, lw=1.45, label=label)
     axes[1].axhline(CRITICAL_MOISTURE, color=COLOR_DARK, ls="--", lw=0.9)
     axes[1].set(xlabel="径向位置 / cm", ylabel="含水率 / kg·kg$^{-1}$", title="代表时刻径向剖面")
-    for axis in axes:
-        _style_axis(axis)
+    _style_axis(axes[0], show_grid=False)
+    _style_axis(axes[1])
     handles, labels = axes[1].get_legend_handles_labels()
     figure.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.86), ncol=6)
     _set_top_title(figure, "含水率由表面向轴心逐步衰减", y=0.985)

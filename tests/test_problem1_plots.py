@@ -102,12 +102,17 @@ def test_main_response_figure_keeps_only_two_nonredundant_panels():
     plotting.close_without_export(figure)
 
 
-def test_style_prefers_microsoft_yahei_and_disables_gridlines():
-    assert plotting.CJK_FONT_CANDIDATES[0] == "Microsoft YaHei"
-    assert plotting.mpl.rcParams["font.sans-serif"][0] == "Microsoft YaHei"
+def test_style_uses_song_fonts_and_visible_paper_grid():
+    assert plotting.CJK_FONT_CANDIDATES[0] == "STSong"
+    assert plotting.mpl.rcParams["font.family"] == ["serif"]
+    assert plotting.mpl.rcParams["font.serif"][:2] == ["STSong", "SimSun"]
+    assert plotting.HEADING_FONT == "STZhongsong"
     figure, axis = plotting.plt.subplots()
     plotting._style_axis(axis)
-    assert not any(line.get_visible() for line in axis.get_ygridlines())
+    line = next(line for line in axis.get_ygridlines() if line.get_visible())
+    assert line.get_color().upper() == "#AAA5A8"
+    assert line.get_linewidth() == pytest.approx(0.55)
+    assert line.get_alpha() == pytest.approx(0.70)
     plotting.close_without_export(figure)
 
 
