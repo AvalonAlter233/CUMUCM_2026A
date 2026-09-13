@@ -1,13 +1,9 @@
-"""问题一论文配图：实测边界、热湿响应、场演化和数值验证。
-
-数据源：附件一边界数据、result1.xlsx 以及问题一求解器的现场重算结果。
-脚本不写入求解结果，只在新图全部成功导出后清理旧问题一 PNG。
-"""
-
 from __future__ import annotations
 
+import sys
 from functools import lru_cache
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import matplotlib as mpl
 import matplotlib.font_manager as font_manager
@@ -16,29 +12,38 @@ import matplotlib.ticker as mticker
 import numpy as np
 from openpyxl import load_workbook
 
-import 问题1_求解 as problem1_solver
+if (Path(__file__).parent / "问题1_求解_改.py").is_file():
+    import 问题1_求解_改 as problem1_solver
+else:
+    import 问题1_求解 as problem1_solver
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent
-ATTACHMENT_ONE = PROJECT_ROOT / "附件" / "附件1.xlsx"
-RESULT_ONE = PROJECT_ROOT / "附件" / "附件3" / "result1.xlsx"
-FIGURE_DIR = PROJECT_ROOT / "figures" / "问题一"
+nature_figure_scripts = Path.home() / ".codex" / "skills" / "nature-figure" / "scripts"
+if str(nature_figure_scripts) not in sys.path:
+    sys.path.insert(0, str(nature_figure_scripts))
+from audit_panel_alignment import require_matplotlib_panel_alignment
 
-CJK_FONT_CANDIDATES = (
+
+project_root = Path(__file__).resolve().parent
+attachment_one = project_root / "附件" / "附件1.xlsx"
+result_one = project_root / "附件" / "附件3" / "result1.xlsx"
+figure_dir = project_root / "figures" / "问题一"
+
+cjk_font_candidates = (
     "STSong", "SimSun", "Source Han Serif SC", "Noto Serif CJK SC",
 )
-INSTALLED_FONTS = {font.name for font in font_manager.fontManager.ttflist}
-AVAILABLE_CJK_FONTS = [
-    name for name in CJK_FONT_CANDIDATES if name in INSTALLED_FONTS
+installed_fonts = {font.name for font in font_manager.fontManager.ttflist}
+available_cjk_fonts = [
+    name for name in cjk_font_candidates if name in installed_fonts
 ]
-if not AVAILABLE_CJK_FONTS:
-    print("提示：本机未检测到中文字体，图中中文可能显示为方框。")
-HEADING_FONT = "STZhongsong" if "STZhongsong" in INSTALLED_FONTS else AVAILABLE_CJK_FONTS[0]
+if not available_cjk_fonts:
+    print("提示：未检测到中文字体，图中中文可能显示为方框。")
+heading_font = "STZhongsong" if "STZhongsong" in installed_fonts else available_cjk_fonts[0]
 
 mpl.rcParams.update(
     {
         "font.family": "serif",
-        "font.serif": [*AVAILABLE_CJK_FONTS, "Times New Roman", "Times", "DejaVu Serif"],
+        "font.serif": [*available_cjk_fonts, "Times New Roman", "Times", "DejaVu Serif"],
         "mathtext.fontset": "stix",
         "axes.unicode_minus": False,
         "font.size": 8,
@@ -59,19 +64,19 @@ mpl.rcParams.update(
     }
 )
 
-SNAPSHOT_TIMES = (100.0, 600.0, 1200.0, 1800.0)
-EXPORT_DPI = 600
-PAD_INCHES = 0.06
-FIGURE_FORMATS = ("png",)
+snapshot_times = (100.0, 600.0, 1200.0, 1800.0)
+export_dpi = 600
+pad_inches = 0.06
+figure_formats = ("png",)
 
-REFERENCE_PALETTE = ("#44757A", "#452A3D", "#D44C3C", "#EED5B7")
-COLOR_TEAL, COLOR_PLUM, COLOR_CORAL, COLOR_SAND = REFERENCE_PALETTE
-COLOR_CENTER = COLOR_TEAL
-COLOR_AVERAGE = COLOR_PLUM
-COLOR_SURFACE = COLOR_CORAL
-PROFILE_COLORS = (COLOR_TEAL, COLOR_PLUM, "#B88E63", COLOR_CORAL)
+reference_palette = ("#44757A", "#452A3D", "#D44C3C", "#EED5B7")
+color_teal, color_plum, color_coral, color_sand = reference_palette
+color_center = color_teal
+color_average = color_plum
+color_surface = color_coral
+profile_colors = (color_teal, color_plum, "#B88E63", color_coral)
 
-NEW_FIGURE_BASES = (
+new_figure_bases = (
     "图1_实测边界条件",
     "图2_中心平均表面响应",
     "图3_热湿场时空演化",
@@ -80,30 +85,30 @@ NEW_FIGURE_BASES = (
 )
 
 
-def prepend_initial_state(
+def add_initial_state(
     times: np.ndarray, field: np.ndarray, initial_value: float
 ) -> tuple[np.ndarray, np.ndarray]:
-    """将已知的 t=0 均匀初始场加入时空场数据。"""
     if field.ndim != 2 or field.shape[0] != len(times):
         raise ValueError("时间轴与场数组的第一维不一致。")
     initial_row = np.full((1, field.shape[1]), float(initial_value))
     return np.concatenate(([0.0], times), axis=0), np.vstack((initial_row, field))
 
 
-def max_radial_error(reference: np.ndarray, refined: np.ndarray) -> np.ndarray:
-    """计算每个时刻沿全部径向输出点的最大绝对差。"""
+def radial_error(reference: np.ndarray, refined: np.ndarray) -> np.ndarray:
+    # 先把两份场数据的形状对一下，对齐了再按时刻往下比较。
+    # 每个时刻留下径向上差得最大的那个数，后面画误差曲线用。
     if reference.shape != refined.shape or reference.ndim != 2:
         raise ValueError("待比较场必须是形状相同的二维数组。")
     return np.max(np.abs(reference - refined), axis=1)
 
 
-def validate_comparable_outputs(
+def check_output_axes(
     reference_times: np.ndarray,
     refined_times: np.ndarray,
     reference_radii: np.ndarray,
     refined_radii: np.ndarray,
 ) -> None:
-    """确认两个结果可以在相同时间和径向网格上逐点比较。"""
+    # 两份结果先对一下时间和位置，看看是不是用的同一套输出点。
     if not np.allclose(reference_times, refined_times):
         raise ValueError("细化结果的时间轴与基准结果不一致。")
     if not np.allclose(reference_radii, refined_radii):
@@ -111,7 +116,6 @@ def validate_comparable_outputs(
 
 
 def snapshot_index(times: np.ndarray, snapshot_time: float) -> int:
-    """返回结果时间轴中指定快照的行号。"""
     matches = np.flatnonzero(np.isclose(times, snapshot_time))
     if len(matches) != 1:
         raise ValueError(f"结果中未找到唯一的 {snapshot_time:g} s 快照。")
@@ -119,11 +123,11 @@ def snapshot_index(times: np.ndarray, snapshot_time: float) -> int:
 
 
 def read_boundary_data() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """读取附件一的时间、烘房温度和等效外界水分变量。"""
-    workbook = load_workbook(ATTACHMENT_ONE, data_only=True, read_only=True)
-    worksheet = workbook.active
+    # 环境温度和水分都在这张表里
+    book = load_workbook(attachment_one, data_only=True, read_only=True)
+    sheet = book.active
     rows = [
-        row for row in worksheet.iter_rows(min_row=2, values_only=True)
+        row for row in sheet.iter_rows(min_row=2, values_only=True)
         if row[0] is not None
     ]
     data = np.asarray(rows, dtype=float)
@@ -132,16 +136,16 @@ def read_boundary_data() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return data[:, 0], data[:, 1], data[:, 2]
 
 
-def read_problem_one_result() -> tuple[
+def read_results() -> tuple[
     np.ndarray, np.ndarray, np.ndarray, np.ndarray
 ]:
-    """读取 result1.xlsx 中的时间、径向输出点、温度场和含水率场。"""
-    workbook = load_workbook(RESULT_ONE, data_only=True, read_only=True)
+    workbook = load_workbook(result_one, data_only=True, read_only=True)
     if len(workbook.worksheets) < 2:
         raise ValueError("result1.xlsx 必须包含温度和含水率两个工作表。")
     temperature_sheet, moisture_sheet = workbook.worksheets[:2]
 
     def read_sheet(sheet) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        # 时间、半径和数值分开整理好
         header = next(sheet.iter_rows(min_row=1, max_row=1, values_only=True))
         rows = [
             row for row in sheet.iter_rows(min_row=2, values_only=True)
@@ -154,7 +158,7 @@ def read_problem_one_result() -> tuple[
 
     times_s, radii_cm, temperature_field = read_sheet(temperature_sheet)
     moisture_times_s, moisture_radii_cm, moisture_field = read_sheet(moisture_sheet)
-    validate_comparable_outputs(
+    check_output_axes(
         times_s,
         moisture_times_s,
         radii_cm,
@@ -165,40 +169,40 @@ def read_problem_one_result() -> tuple[
 
 @lru_cache(maxsize=1)
 def load_plot_data() -> dict[str, object]:
-    """读取官方结果并补充精确平均量与空间/时间细化结果。"""
-    boundary_times_s, boundary_temperature, boundary_moisture = read_boundary_data()
-    workbook_times_s, workbook_radii_cm, workbook_temperature, workbook_moisture = (
-        read_problem_one_result()
+    # 后面每张图只取各需，余者仍然留在这份数据里。
+    env_seconds, air_temp, air_water = read_boundary_data()
+    sheet_times, sheet_radii, sheet_temp, sheet_water = (
+        read_results()
     )
 
-    reference = problem1_solver.simulate_problem_one()
-    reference_radii_cm = reference.output_radii * 100.0
-    validate_comparable_outputs(
+    reference = problem1_solver.simulate_question1()
+    ref_radii = reference.output_radii * 100.0
+    check_output_axes(
         reference.times,
-        workbook_times_s,
-        reference_radii_cm,
-        workbook_radii_cm,
+        sheet_times,
+        ref_radii,
+        sheet_radii,
     )
-    rounding_tolerance = 5.1e-5
+    round_tol = 5.1e-5
     if not np.allclose(
         reference.temperature_field,
-        workbook_temperature,
+        sheet_temp,
         rtol=0.0,
-        atol=rounding_tolerance,
+        atol=round_tol,
     ):
         raise ValueError("求解器温度场与 result1.xlsx 的四位小数结果不一致。")
     if not np.allclose(
         reference.moisture_field,
-        workbook_moisture,
+        sheet_water,
         rtol=0.0,
-        atol=rounding_tolerance,
+        atol=round_tol,
     ):
         raise ValueError("求解器含水率场与 result1.xlsx 的四位小数结果不一致。")
 
-    fine_space = problem1_solver.simulate_problem_one(cell_count=320)
-    fine_time = problem1_solver.simulate_problem_one(time_step=0.5)
+    fine_space = problem1_solver.simulate_question1(cell_count=320)
+    fine_time = problem1_solver.simulate_question1(time_step=0.5)
     for refined in (fine_space, fine_time):
-        validate_comparable_outputs(
+        check_output_axes(
             reference.times,
             refined.times,
             reference.output_radii,
@@ -206,11 +210,11 @@ def load_plot_data() -> dict[str, object]:
         )
 
     return {
-        "boundary_times_s": boundary_times_s,
-        "boundary_temperature": boundary_temperature,
-        "boundary_moisture": boundary_moisture,
+        "boundary_times_s": env_seconds,
+        "boundary_temperature": air_temp,
+        "boundary_moisture": air_water,
         "times_s": reference.times,
-        "radii_cm": reference_radii_cm,
+        "radii_cm": ref_radii,
         "temperature_field": reference.temperature_field,
         "moisture_field": reference.moisture_field,
         "average_temperature": reference.average_temperature,
@@ -223,25 +227,36 @@ def load_plot_data() -> dict[str, object]:
     }
 
 
-def save_publication_figure(
+def save_figure(
     figure: plt.Figure,
     base_name: str,
+    exclude_axes: list[plt.Axes] | None = None,
 ) -> None:
-    """使用 Matplotlib 原生接口导出 600 dpi PNG。"""
-    FIGURE_DIR.mkdir(parents=True, exist_ok=True)
+    # 检查走完并且通过了，才把图片保存下来
+    figure_dir.mkdir(parents=True, exist_ok=True)
     figure.canvas.draw()
-    stem = FIGURE_DIR / base_name
-    save_kwargs = {"bbox_inches": "tight", "pad_inches": PAD_INCHES, "facecolor": "white"}
-    figure.savefig(stem.with_suffix(".png"), dpi=EXPORT_DPI, **save_kwargs)
+    stem = figure_dir / base_name
+    with TemporaryDirectory(prefix="problem1-figure-qa-") as tmp_dir:
+        require_matplotlib_panel_alignment(
+            figure,
+            json_out=Path(tmp_dir) / f"{base_name}.alignment.json",
+            exclude_axes=exclude_axes or [],
+            row_groups=getattr(figure, "_alignment_row_groups", None),
+            tolerance_pt=1.5,
+            gutter_tolerance_pt=1.5,
+            require_panel_labels=False,
+            strict=True,
+        )
+    save_opts = {"bbox_inches": "tight", "pad_inches": pad_inches, "facecolor": "white"}
+    figure.savefig(stem.with_suffix(".png"), dpi=export_dpi, **save_opts)
     plt.close(figure)
 
 
-def close_without_export(figure: plt.Figure) -> None:
-    """关闭测试或预览图，不触发文件导出。"""
+def close_figure(figure: plt.Figure) -> None:
     plt.close(figure)
 
-
-def _style_axis(axis: plt.Axes, *, show_grid: bool = True) -> None:
+# 下文还是比较好理解的，不注释了
+def style_axis(axis: plt.Axes, *, show_grid: bool = True) -> None:
     axis.set_axisbelow(True)
     if show_grid:
         axis.grid(
@@ -259,48 +274,49 @@ def _style_axis(axis: plt.Axes, *, show_grid: bool = True) -> None:
         if not any("\u4e00" <= character <= "\u9fff" for character in label.get_text()):
             label.set_fontfamily("Times New Roman")
     for text in (axis.title, axis.xaxis.label, axis.yaxis.label):
-        text.set_fontfamily(HEADING_FONT)
+        text.set_fontfamily(heading_font)
         text.set_fontweight("bold")
     for spine in (axis.spines["left"], axis.spines["bottom"]):
         spine.set_color("#51474D")
         spine.set_linewidth(0.75)
 
 
-def _set_top_title(figure: plt.Figure, title: str, y: float = 0.97) -> None:
+def set_title(figure: plt.Figure, title: str, y: float = 0.97) -> None:
     text = figure.suptitle(title, x=0.5, y=y, fontsize=12, fontweight="bold")
-    text.set_fontfamily(HEADING_FONT)
+    text.set_fontfamily(heading_font)
 
 
-def plot_boundary_conditions(data: dict[str, object]) -> plt.Figure:
-    """绘制实测烘房边界及问题一求解时间窗口。"""
-    boundary_times_h = np.asarray(data["boundary_times_s"], dtype=float) / 3600.0
-    boundary_temperature = np.asarray(data["boundary_temperature"], dtype=float)
-    boundary_moisture = np.asarray(data["boundary_moisture"], dtype=float)
-    figure, axes = plt.subplots(1, 2, figsize=(7.0, 2.6), sharex=True)
+def plot_boundary(data: dict[str, object]) -> plt.Figure:
+    # 环境数据已在前面读好
+    # 先把两边的曲线画出来，再补齐标题和坐标等等。
+    env_hours = np.asarray(data["boundary_times_s"], dtype=float) / 3600.0
+    air_temp = np.asarray(data["boundary_temperature"], dtype=float)
+    air_water = np.asarray(data["boundary_moisture"], dtype=float)
+    fig, axs = plt.subplots(1, 2, figsize=(7.0, 2.6), sharex=True)
     series = (
-        (axes[0], boundary_temperature, "T∞ / °C", "温度边界", COLOR_CENTER, "a"),
+        (axs[0], air_temp, "T∞ / °C", "温度边界", color_center, "a"),
         (
-            axes[1],
-            boundary_moisture,
+            axs[1],
+            air_water,
             "C∞ / kg/kg",
             "水分边界",
-            COLOR_SURFACE,
+            color_surface,
             "b",
         ),
     )
-    for axis, values, ylabel, title, color, label in series:
-        axis.plot(boundary_times_h, values, color=color, linewidth=1.7)
-        axis.set_title(title, loc="left", pad=7, fontsize=9.2, fontweight="bold", fontfamily=HEADING_FONT)
-        axis.set_xlabel("时间 / h")
-        axis.set_ylabel(ylabel)
-        axis.set_xlim(0.0, 0.5)
-        _style_axis(axis)
-    _set_top_title(figure, "实测边界条件", y=0.96)
-    figure.subplots_adjust(wspace=0.30, bottom=0.21, top=0.73, left=0.09, right=0.98)
-    return figure
+    for ax, values, ylabel, title, color, label in series:
+        ax.plot(env_hours, values, color=color, linewidth=1.7)
+        ax.set_title(title, loc="left", pad=7, fontsize=9.2, fontweight="bold", fontfamily=heading_font)
+        ax.set_xlabel("时间 / h")
+        ax.set_ylabel(ylabel)
+        ax.set_xlim(0.0, 0.5)
+        style_axis(ax)
+    set_title(fig, "实测边界条件", y=0.96)
+    fig.subplots_adjust(wspace=0.30, bottom=0.21, top=0.73, left=0.09, right=0.98)
+    return fig
 
 
-def _plot_position_trajectories(
+def plot_positions(
     axis: plt.Axes,
     times_h: np.ndarray,
     field: np.ndarray,
@@ -308,10 +324,12 @@ def _plot_position_trajectories(
     ylabel: str,
     title: str,
 ) -> None:
+    # 先把中心、平均和表面三条线画完。
+    # 颜色和线型按各自的标签来
     for values, label, color, linestyle in (
-        (field[:, 0], "中心", COLOR_CENTER, "-"),
-        (average, "体积平均", COLOR_AVERAGE, "--"),
-        (field[:, -1], "表面", COLOR_SURFACE, "-"),
+        (field[:, 0], "中心", color_center, "-"),
+        (average, "体积平均", color_average, "--"),
+        (field[:, -1], "表面", color_surface, "-"),
     ):
         axis.plot(
             times_h,
@@ -321,35 +339,34 @@ def _plot_position_trajectories(
             linestyle=linestyle,
             label=label,
         )
-    axis.set_title(title, loc="left", pad=7, fontsize=9.2, fontweight="bold", fontfamily=HEADING_FONT)
+    axis.set_title(title, loc="left", pad=7, fontsize=9.2, fontweight="bold", fontfamily=heading_font)
     axis.set_xlabel("时间 / h")
     axis.set_ylabel(ylabel)
     axis.set_xlim(times_h[0], times_h[-1] + 0.045)
-    _style_axis(axis)
+    style_axis(axis)
 
 
-def plot_main_response(data: dict[str, object]) -> plt.Figure:
-    """绘制中心、体积平均和表面处的温湿响应。"""
+def plot_response(data: dict[str, object]) -> plt.Figure:
     times_h = np.asarray(data["times_s"], dtype=float) / 3600.0
-    temperature_field = np.asarray(data["temperature_field"], dtype=float)
-    moisture_field = np.asarray(data["moisture_field"], dtype=float)
-    average_temperature = np.asarray(data["average_temperature"], dtype=float)
-    average_moisture = np.asarray(data["average_moisture"], dtype=float)
-    figure, axes = plt.subplots(1, 2, figsize=(7.0, 2.8), sharex=True)
-    _plot_position_trajectories(
-        axes[0], times_h, temperature_field, average_temperature, "温度 / °C", "温度"
+    temp_map = np.asarray(data["temperature_field"], dtype=float)
+    water_map = np.asarray(data["moisture_field"], dtype=float)
+    temp_mean = np.asarray(data["average_temperature"], dtype=float)
+    water_mean = np.asarray(data["average_moisture"], dtype=float)
+    fig, axs = plt.subplots(1, 2, figsize=(7.0, 2.8), sharex=True)
+    plot_positions(
+        axs[0], times_h, temp_map, temp_mean, "温度 / °C", "温度"
     )
-    _plot_position_trajectories(
-        axes[1],
+    plot_positions(
+        axs[1],
         times_h,
-        moisture_field,
-        average_moisture,
+        water_map,
+        water_mean,
         "干基含水率 / kg/kg",
         "含水率",
     )
-    handles, labels = axes[0].get_legend_handles_labels()
-    _set_top_title(figure, "药材内部温湿响应")
-    figure.legend(
+    handles, labels = axs[0].get_legend_handles_labels()
+    set_title(fig, "药材内部温湿响应")
+    fig.legend(
         handles,
         labels,
         ncol=3,
@@ -358,41 +375,43 @@ def plot_main_response(data: dict[str, object]) -> plt.Figure:
         handlelength=1.8,
         columnspacing=1.5,
     )
-    figure.subplots_adjust(wspace=0.31, bottom=0.21, top=0.68, left=0.09, right=0.98)
-    return figure
+    fig.subplots_adjust(wspace=0.31, bottom=0.21, top=0.68, left=0.09, right=0.98)
+    return fig
 
 
-def plot_field_evolution(data: dict[str, object]) -> plt.Figure:
-    """绘制加入 t=0 初始状态的温度和含水率时空场。"""
+def plot_field(data: dict[str, object]) -> plt.Figure:
+    # 把不同时间、不同位置上的数放到同一块图里展开。
+    # 数据先按时间和半径排好，后面看颜色的时候，就能从两个方向看变化。
     times_s = np.asarray(data["times_s"], dtype=float)
     radii_cm = np.asarray(data["radii_cm"], dtype=float)
-    temperature_times, temperature_field = prepend_initial_state(
+    temp_times, temp_map = add_initial_state(
         times_s,
         np.asarray(data["temperature_field"], dtype=float),
-        problem1_solver.INITIAL_TEMPERATURE,
+        problem1_solver.initial_temperature,
     )
-    moisture_times, moisture_field = prepend_initial_state(
+    water_times, water_map = add_initial_state(
         times_s,
         np.asarray(data["moisture_field"], dtype=float),
-        problem1_solver.INITIAL_MOISTURE,
+        problem1_solver.initial_moisture,
     )
-    if not np.allclose(temperature_times, moisture_times):
+    if not np.allclose(temp_times, water_times):
         raise ValueError("温度场和含水率场的时空网格不一致。")
-    times_h = temperature_times / 3600.0
-    figure, axes = plt.subplots(1, 2, figsize=(7.0, 3.0), sharex=True, sharey=True)
+    times_h = temp_times / 3600.0
+    fig, axs = plt.subplots(1, 2, figsize=(7.0, 3.0), sharex=True, sharey=True)
+    cbars = []
     panels = (
-        (axes[0], temperature_field, "magma", "温度场", "°C", "a"),
+        (axs[0], temp_map, "magma", "温度场", "°C", "a"),
         (
-            axes[1],
-            moisture_field,
+            axs[1],
+            water_map,
             "viridis",
             "含水率场",
             "kg/kg",
             "b",
         ),
     )
-    for axis, field, cmap, title, colorbar_label, label in panels:
-        mesh = axis.pcolormesh(
+    for ax, field, cmap, title, bar_label, label in panels:
+        mesh = ax.pcolormesh(
             radii_cm,
             times_h,
             field,
@@ -401,100 +420,103 @@ def plot_field_evolution(data: dict[str, object]) -> plt.Figure:
             vmin=float(np.min(field)),
             vmax=float(np.max(field)),
         )
-        colorbar = figure.colorbar(mesh, ax=axis, fraction=0.046, pad=0.04)
-        colorbar.set_label(colorbar_label, rotation=270, labelpad=13)
-        colorbar.ax.yaxis.label.set_fontfamily(HEADING_FONT)
-        colorbar.ax.yaxis.label.set_fontweight("bold")
-        for tick in colorbar.ax.get_yticklabels():
+        cbar = fig.colorbar(mesh, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label(bar_label, rotation=270, labelpad=13)
+        cbar.ax.yaxis.label.set_fontfamily(heading_font)
+        cbar.ax.yaxis.label.set_fontweight("bold")
+        for tick in cbar.ax.get_yticklabels():
             tick.set_fontfamily("Times New Roman")
-        colorbar.ax.grid(False)
-        axis.set_title(title, loc="left", pad=7, fontsize=9.2, fontweight="bold", fontfamily=HEADING_FONT)
-        axis.set_xlabel("半径 r / cm")
-        axis.set_ylabel("时间 / h")
-        axis.set_xlim(radii_cm[0], radii_cm[-1])
-        axis.set_ylim(times_h[0], times_h[-1])
-        _style_axis(axis, show_grid=False)
-    _set_top_title(figure, "热湿场时空演化")
-    figure.subplots_adjust(wspace=0.28, bottom=0.17, top=0.75, left=0.09, right=0.92)
-    return figure
+        cbar.ax.grid(False)
+        cbars.append(cbar.ax)
+        ax.set_title(title, loc="left", pad=7, fontsize=9.2, fontweight="bold", fontfamily=heading_font)
+        ax.set_xlabel("半径 r / cm")
+        ax.set_ylabel("时间 / h")
+        ax.set_xlim(radii_cm[0], radii_cm[-1])
+        ax.set_ylim(times_h[0], times_h[-1])
+        style_axis(ax, show_grid=False)
+    set_title(fig, "热湿场时空演化")
+    fig._alignment_exclude_axes = cbars
+    fig._alignment_row_groups = [["a", "b"]]
+    fig.subplots_adjust(wspace=0.28, bottom=0.17, top=0.75, left=0.09, right=0.92)
+    return fig
 
 
-def plot_radial_profiles(data: dict[str, object]) -> plt.Figure:
-    """绘制四个代表时刻的温度和含水率径向剖面。"""
+def plot_profiles(data: dict[str, object]) -> plt.Figure:
     times_s = np.asarray(data["times_s"], dtype=float)
     radii_cm = np.asarray(data["radii_cm"], dtype=float)
-    temperature_field = np.asarray(data["temperature_field"], dtype=float)
-    moisture_field = np.asarray(data["moisture_field"], dtype=float)
-    figure, axes = plt.subplots(1, 2, figsize=(7.0, 3.15), sharex=True)
+    temp_map = np.asarray(data["temperature_field"], dtype=float)
+    water_map = np.asarray(data["moisture_field"], dtype=float)
+    fig, axs = plt.subplots(1, 2, figsize=(7.0, 3.15), sharex=True)
     lines = []
     panels = (
-        (axes[0], temperature_field, "温度 / °C", "温度", "a"),
+        (axs[0], temp_map, "温度 / °C", "温度", "a"),
         (
-            axes[1],
-            moisture_field,
+            axs[1],
+            water_map,
             "干基含水率 / kg/kg",
             "含水率",
             "b",
         ),
     )
-    for axis, field, ylabel, title, label in panels:
-        for color, snapshot_time in zip(PROFILE_COLORS, SNAPSHOT_TIMES):
-            (line,) = axis.plot(
+    for ax, field, ylabel, title, label in panels:
+        for color, snapshot_time in zip(profile_colors, snapshot_times):
+            (line,) = ax.plot(
                 radii_cm,
                 field[snapshot_index(times_s, snapshot_time)],
                 color=color,
                 linewidth=1.65,
                 label=f"{snapshot_time:g} s",
             )
-            if axis is axes[0]:
+            if ax is axs[0]:
                 lines.append(line)
-        axis.set_title(title, loc="left", pad=7, fontsize=9.2, fontweight="bold", fontfamily=HEADING_FONT)
-        axis.set_xlabel("半径 r / cm")
-        axis.set_ylabel(ylabel)
-        axis.set_xlim(radii_cm[0], radii_cm[-1])
-        _style_axis(axis)
-    _set_top_title(figure, "关键时刻径向剖面")
-    figure.legend(
+        ax.set_title(title, loc="left", pad=7, fontsize=9.2, fontweight="bold", fontfamily=heading_font)
+        ax.set_xlabel("半径 r / cm")
+        ax.set_ylabel(ylabel)
+        ax.set_xlim(radii_cm[0], radii_cm[-1])
+        style_axis(ax)
+    set_title(fig, "关键时刻径向剖面")
+    fig.legend(
         handles=lines,
-        labels=[f"{value:g} s" for value in SNAPSHOT_TIMES],
+        labels=[f"{value:g} s" for value in snapshot_times],
         ncol=4,
         loc="upper center",
         bbox_to_anchor=(0.52, 0.87),
         handlelength=1.9,
         columnspacing=1.3,
     )
-    figure.subplots_adjust(wspace=0.30, bottom=0.17, top=0.70, left=0.10, right=0.98)
-    return figure
+    fig.subplots_adjust(wspace=0.30, bottom=0.17, top=0.70, left=0.10, right=0.98)
+    return fig
 
 
-def build_validation_errors(data: dict[str, object]) -> dict[str, np.ndarray]:
-    """提取空间网格和时间步长细化的逐时刻最大径向误差。"""
-    reference_temperature = np.asarray(data["temperature_field"], dtype=float)
-    reference_moisture = np.asarray(data["moisture_field"], dtype=float)
+def collect_errors(data: dict[str, object]) -> dict[str, np.ndarray]:
+    # 空间加密的结果和时间加密的结果分别同参考结果比较。
+    # 这几串误差存放，后面画到验证图时再取。
+    ref_temp = np.asarray(data["temperature_field"], dtype=float)
+    ref_water = np.asarray(data["moisture_field"], dtype=float)
     return {
-        "grid_temperature": max_radial_error(
-            reference_temperature,
+        "grid_temperature": radial_error(
+            ref_temp,
             np.asarray(data["fine_space_temperature"], dtype=float),
         ),
-        "grid_moisture": max_radial_error(
-            reference_moisture,
+        "grid_moisture": radial_error(
+            ref_water,
             np.asarray(data["fine_space_moisture"], dtype=float),
         ),
-        "time_temperature": max_radial_error(
-            reference_temperature,
+        "time_temperature": radial_error(
+            ref_temp,
             np.asarray(data["fine_time_temperature"], dtype=float),
         ),
-        "time_moisture": max_radial_error(
-            reference_moisture,
+        "time_moisture": radial_error(
+            ref_water,
             np.asarray(data["fine_time_moisture"], dtype=float),
         ),
     }
 
 
-def plot_numerical_validation(data: dict[str, object]) -> plt.Figure:
-    """绘制空间/时间细化误差和基准求解诊断。"""
+def plot_validation(data: dict[str, object]) -> plt.Figure:
+    # 先把需要的数取齐，再分别放到对应的位置
     times_h = np.asarray(data["times_s"], dtype=float) / 3600.0
-    errors = build_validation_errors(data)
+    errors = collect_errors(data)
     figure, axes = plt.subplots(2, 2, figsize=(7.0, 4.55), sharex=True)
     panels = (
         (
@@ -531,9 +553,9 @@ def plot_numerical_validation(data: dict[str, object]) -> plt.Figure:
         ),
     )
     for axis, values, title, ylabel, comparison, label in panels:
-        axis.semilogy(times_h, values, color=COLOR_TEAL, linewidth=1.45)
+        axis.semilogy(times_h, values, color=color_teal, linewidth=1.45)
         axis.yaxis.set_major_formatter(mticker.FuncFormatter(lambda value, _: f"{value:.0e}"))
-        axis.set_title(title, loc="left", pad=7, fontsize=9.2, fontweight="bold", fontfamily=HEADING_FONT)
+        axis.set_title(title, loc="left", pad=7, fontsize=9.2, fontweight="bold", fontfamily=heading_font)
         axis.set_xlabel("时间 / h")
         axis.set_ylabel(ylabel)
         axis.set_xlim(times_h[0], times_h[-1])
@@ -545,10 +567,10 @@ def plot_numerical_validation(data: dict[str, object]) -> plt.Figure:
             fontsize=6.4,
             ha="left",
             va="top",
-            color=COLOR_TEAL,
+            color=color_teal,
         )
-        _style_axis(axis)
-    _set_top_title(figure, "数值收敛验证")
+        style_axis(axis)
+    set_title(figure, "数值收敛验证")
     figure.subplots_adjust(
         wspace=0.34,
         hspace=0.38,
@@ -560,7 +582,7 @@ def plot_numerical_validation(data: dict[str, object]) -> plt.Figure:
     return figure
 
 
-LEGACY_PROBLEM_ONE_OUTPUTS = (
+old_figure_names = (
     "图1_附件一烘房温度曲线.png",
     "图2_附件一烘房水分浓度曲线.png",
     "图3_附件一边界采样间隔.png",
@@ -573,48 +595,51 @@ LEGACY_PROBLEM_ONE_OUTPUTS = (
 )
 
 
-def remove_legacy_problem_one_outputs() -> None:
-    """只清理旧问题一图集的精确文件名。"""
-    FIGURE_DIR.mkdir(parents=True, exist_ok=True)
-    for basename in LEGACY_PROBLEM_ONE_OUTPUTS:
-        target = FIGURE_DIR / basename
-        if target.parent != FIGURE_DIR:
+def clear_old_figures() -> None:
+    figure_dir.mkdir(parents=True, exist_ok=True)
+    for basename in old_figure_names:
+        target = figure_dir / basename
+        if target.parent != figure_dir:
             raise ValueError(f"拒绝清理图集目录之外的路径：{target}")
         if target.exists():
             target.unlink()
 
 
-def export_all(data: dict[str, object]) -> None:
-    """生成五张新图，确认导出完整后再清理旧问题一 PNG。"""
+def export_figures(data: dict[str, object]) -> None:
+    # 依次生成图片
     builders = (
-        (plot_boundary_conditions, NEW_FIGURE_BASES[0]),
-        (plot_main_response, NEW_FIGURE_BASES[1]),
-        (plot_field_evolution, NEW_FIGURE_BASES[2]),
-        (plot_radial_profiles, NEW_FIGURE_BASES[3]),
-        (plot_numerical_validation, NEW_FIGURE_BASES[4]),
+        (plot_boundary, new_figure_bases[0]),
+        (plot_response, new_figure_bases[1]),
+        (plot_field, new_figure_bases[2]),
+        (plot_profiles, new_figure_bases[3]),
+        (plot_validation, new_figure_bases[4]),
     )
     for builder, base_name in builders:
-        figure = builder(data)
-        save_publication_figure(figure, base_name)
+        fig = builder(data)
+        save_figure(
+            fig,
+            base_name,
+            exclude_axes=list(getattr(fig, "_alignment_exclude_axes", [])),
+        )
 
     missing_outputs = [
-        FIGURE_DIR / f"{base_name}.{suffix}"
-        for base_name in NEW_FIGURE_BASES
-        for suffix in FIGURE_FORMATS
-        if not (FIGURE_DIR / f"{base_name}.{suffix}").exists()
+        figure_dir / f"{base_name}.{suffix}"
+        for base_name in new_figure_bases
+        for suffix in figure_formats
+        if not (figure_dir / f"{base_name}.{suffix}").exists()
     ]
     if missing_outputs:
         raise FileNotFoundError(f"新图集导出不完整：{missing_outputs}")
-    remove_legacy_problem_one_outputs()
+    clear_old_figures()
     print(
-        f"问题一绘图完成：生成 {len(NEW_FIGURE_BASES)} 张图，"
-        f"每张包含 {len(FIGURE_FORMATS)} 种格式，输出目录：{FIGURE_DIR}"
+        f"问题一绘图完成：生成 {len(new_figure_bases)} 张图，"
+        f"每张包含 {len(figure_formats)} 种格式，输出目录：{figure_dir}"
     )
 
 
 def main() -> None:
-    export_all(load_plot_data())
+    export_figures(load_plot_data())
 
-
+# 好耶ww
 if __name__ == "__main__":
     main()

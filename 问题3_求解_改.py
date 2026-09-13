@@ -8,29 +8,29 @@ from typing import NamedTuple
 import numpy as np
 from openpyxl import load_workbook
 
+# 默认参数呃呃
+project_root = Path(__file__).resolve().parent
+input_file = project_root / "附件" / "附件1.xlsx"
+output_file = project_root / "附件" / "附件3" / "result3.xlsx"
+diagnostics_file = project_root / "附件" / "附件3" / "result3_diagnostics.json"
 
-PROJECT_ROOT = Path(__file__).resolve().parent
-INPUT_FILE = PROJECT_ROOT / "附件" / "附件1.xlsx"
-OUTPUT_FILE = PROJECT_ROOT / "附件" / "附件3" / "result3.xlsx"
-DIAGNOSTICS_FILE = PROJECT_ROOT / "附件" / "附件3" / "result3_diagnostics.json"
+pellet_radius = 0.02
+convective_heat_coeff = 25.0
+convective_mass_coeff = 8.0e-7
+initial_temperature = 28.0
+initial_moisture = 2.55
+default_critical_moisture = 0.15
 
-PELLET_RADIUS = 0.02
-CONVECTIVE_HEAT_COEFF = 25.0
-CONVECTIVE_MASS_COEFF = 8.0e-7
-INITIAL_TEMPERATURE = 28.0
-INITIAL_MOISTURE = 2.55
-CRITICAL_MOISTURE = 0.15
+default_intervals = 320
+output_spacing = 0.001
+default_time_step = 30.0
+default_report_interval = 60.0
+max_simulation_time = 5 * 24 * 3600.0
 
-INTERNAL_INTERVALS = 320
-OUTPUT_SPACING = 0.001
-TIME_STEP = 30.0
-REPORT_INTERVAL = 60.0
-MAX_SIMULATION_TIME = 5 * 24 * 3600.0
-
-CONVERGENCE_TOL = 1.0e-9
-MAX_ITERATIONS = 200
-RELAXATION_FACTOR = 0.6
-USE_LAST_HOUR_MEAN = True
+convergence_tol = 1.0e-9
+max_iterations = 200
+relaxation_factor = 0.6
+use_plateau_mean = True
 
 
 class DryingRoomBoundary(NamedTuple):
@@ -61,13 +61,17 @@ class CellCenteredGrid(NamedTuple):
     spacing: float
 
 
-def read_drying_boundary(
+def read_room_data(
     path: Path,
     plateau_window: float = 3600.0,
     temperature_offset: float = 0.0,
     moisture_offset: float = 0.0,
     use_last_sample: bool = False,
 ) -> DryingRoomBoundary:
+    # 这一次还要往后算很长一段时间，光把表读出来还不够
+    # 表里的原始数据先留好，等超过表格时间范围以后要用的那几个值，也在这里一起准备。
+    # 前面有实测数据的那段先照常拿着，后面延长出去的部分也得提前备好。
+    # 这里先把两头都安排上，主循环走到哪里再取哪里
     book = load_workbook(path, data_only=True, read_only=True)
     rows = [
         row for row in book.active.iter_rows(min_row=2, values_only=True)
@@ -81,8 +85,11 @@ def read_drying_boundary(
 
     if plateau_window <= 0:
         raise ValueError("平台均值窗口必须为正数。")
+    # 先从数据末尾挑出这一段，后面几个统计都用它。
+    # 要取均值的时候从这里取，要看波动的时候也看这一段，先把范围选好再往下算。
+    # 后面说到末尾这段数据时，指的就是这里选出来的这些行
     stable = data[:, 0] >= data[-1, 0] - plateau_window
-    if use_last_sample or not USE_LAST_HOUR_MEAN:
+    if use_last_sample or not use_plateau_mean:
         temp_level = float(data[-1, 1])
         water_level = float(data[-1, 2])
         n_samples = 1
@@ -109,57 +116,63 @@ def read_drying_boundary(
     )
 
 
-def build_boundary_scenarios(path: Path) -> list[BoundaryScenario]:
-    baseline = read_drying_boundary(path)
+def boundary_cases(path: Path) -> list[BoundaryScenario]:
+    # 准备比较的几种情况先逐个列出来，后面会照这个顺序去算。
+    # 名称也和数据一起带上，等结果放到一起以后，看名字就知道对应的是哪一种设置。
+    # 先把要比较的几份设置放成一排，后面算的时候就能挨个接着来
+    baseline = read_room_data(path)
     return [
         BoundaryScenario(
             "last_30_min_mean",
             "末 30 min 均值",
-            read_drying_boundary(path, plateau_window=1800.0),
+            read_room_data(path, plateau_window=1800.0),
         ),
         BoundaryScenario(
             "last_sample",
             "最后采样点",
-            read_drying_boundary(path, use_last_sample=True),
+            read_room_data(path, use_last_sample=True),
         ),
         BoundaryScenario(
             "temperature_minus_1sigma",
             "温度平台 -1σ",
-            read_drying_boundary(
+            read_room_data(
                 path, temperature_offset=-baseline.plateau_temperature_std
             ),
         ),
         BoundaryScenario(
             "temperature_plus_1sigma",
             "温度平台 +1σ",
-            read_drying_boundary(
+            read_room_data(
                 path, temperature_offset=baseline.plateau_temperature_std
             ),
         ),
         BoundaryScenario(
             "moisture_minus_1sigma",
             "环境水分平台 -1σ",
-            read_drying_boundary(
+            read_room_data(
                 path, moisture_offset=-baseline.plateau_moisture_std
             ),
         ),
         BoundaryScenario(
             "moisture_plus_1sigma",
             "环境水分平台 +1σ",
-            read_drying_boundary(
+            read_room_data(
                 path, moisture_offset=baseline.plateau_moisture_std
             ),
         ),
     ]
 
 
-def linear_threshold_crossing(
+def threshold_time(
     previous_time: float,
     previous_value: float,
     current_time: float,
     current_value: float,
     threshold: float,
 ) -> float:
+    # 前一个时刻还在阈值上面，到了后一个时刻已经到下面了。
+    # 就在这两个记录之间再插一下，先给出一个连续时间的估计，表格照旧按输出间隔来记。
+    # 夹在两个时刻中间的这一点先估出来，等写结果时再和记录时刻一起看
     if current_time <= previous_time:
         raise ValueError("当前时刻必须晚于前一时刻。")
     if not (previous_value >= threshold and current_value < threshold):
@@ -169,11 +182,13 @@ def linear_threshold_crossing(
     ) * (current_time - previous_time)
 
 
-def relative_balance_imbalance(
+def balance_error(
     initial_inventory: float,
     current_inventory: float,
     cumulative_outflow: float,
 ) -> float:
+    # 先把起始的量、现在的量和累计流出的量放到同一处对一下。
+    # 算出来的检查数交回外面，后面记诊断的时候会接着用
     if initial_inventory <= 0:
         raise ValueError("初始积分必须为正数。")
     return abs(
@@ -185,6 +200,9 @@ def boundary_value(
     current_time: float,
     boundary: DryingRoomBoundary,
 ) -> tuple[float, float]:
+    # 先看看当前已经算到什么时刻，再决定从哪里拿边界值。
+    # 还在表格范围里就用表里的数据插值，走过末尾以后就接着用前面备好的平台值。
+    # 前一段走完就接后一段，取值的位置在这里换一下，外面的循环继续往下走
     if current_time <= boundary.times[-1]:
         return (
             float(np.interp(current_time, boundary.times, boundary.temperatures)),
@@ -223,16 +241,19 @@ def harmonic_mean(left: np.ndarray, right: np.ndarray) -> np.ndarray:
 
 
 def build_grid(intervals: int) -> CellCenteredGrid:
+    # 后面要用的网格位置在这里一次分好。
+    # 这些位置留在返回的对象里，主循环拿到以后一直用这份，接下来主要更新位置上的温度和水分。
+    # 这一份网格后面要反复用，先在这里准备一次，接下来一直带着它算
     if intervals < 4:
         raise ValueError("内部径向区间数至少为 4。")
-    faces = np.linspace(0.0, PELLET_RADIUS, intervals + 1)
+    faces = np.linspace(0.0, pellet_radius, intervals + 1)
     centers = 0.5 * (faces[:-1] + faces[1:])
     vol = 0.5 * (faces[1:] ** 2 - faces[:-1] ** 2)
     return CellCenteredGrid(
         faces,
         centers,
         vol,
-        PELLET_RADIUS / intervals,
+        pellet_radius / intervals,
     )
 
 
@@ -268,6 +289,8 @@ def assemble_system(
     grid: CellCenteredGrid,
     time_step: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    # 一轮方程需要的东西在这里依次接起来，先内部，再到外面的边界。
+    # 几条对角线和右边的数组都准备好以后，接着交给下面的求解步骤
     storage = storage_capacity * grid.volumes / time_step
     coef_face = harmonic_mean(
         transport_coefficients[:-1], transport_coefficients[1:]
@@ -287,7 +310,7 @@ def assemble_system(
         1.0 / external_transfer_coefficient
         + 0.5 * grid.spacing / coef_last
     )
-    g_surf = PELLET_RADIUS * h_eff
+    g_surf = pellet_radius * h_eff
     diag[-1] += g_surf
     rhs[-1] += g_surf * external_value
     return lower, diag, upper, rhs
@@ -300,11 +323,13 @@ def advance_temperature(
     grid: CellCenteredGrid,
     time_step: float,
 ) -> np.ndarray:
+    # 温度这一步要用的物性先从当前参考含水率里算出来。
+    # 把这一轮的系数都带齐，再求出温度，拿到结果后回外面继续下一段
     lin_sys = assemble_system(
         old_temperature,
         density(reference_moisture) * heat_capacity(reference_moisture),
         thermal_conductivity(reference_moisture),
-        CONVECTIVE_HEAT_COEFF,
+        convective_heat_coeff,
         room_temperature,
         grid,
         time_step,
@@ -320,11 +345,13 @@ def advance_moisture(
     grid: CellCenteredGrid,
     time_step: float,
 ) -> np.ndarray:
+    # 水分这一部分接着准备自己的系数，环境里的水分值也一并带上。
+    # 先把当前这一步求完，结果返回以后还会和温度那边一起继续更新。
     lin_sys = assemble_system(
         old_moisture,
         np.ones_like(old_moisture),
         moisture_diffusivity(reference_moisture, reference_temperature),
-        CONVECTIVE_MASS_COEFF,
+        convective_mass_coeff,
         room_moisture,
         grid,
         time_step,
@@ -332,7 +359,7 @@ def advance_moisture(
     return solve_tridiagonal(*lin_sys)
 
 
-def reconstruct_output_field(
+def sample_field(
     cell_values: np.ndarray,
     transport_coefficients: np.ndarray,
     external_transfer_coefficient: float,
@@ -340,6 +367,8 @@ def reconstruct_output_field(
     output_nodes: np.ndarray,
     grid: CellCenteredGrid,
 ) -> np.ndarray:
+    # 输出的几个位置先从内部数据里取，中心和表面再照下面的做法分别补一下
+    # 这一排数拼完整了再返回，后面写表时就照它的顺序来。
     node_values = np.interp(output_nodes, grid.centers, cell_values)
     node_values[0] = (9.0 * cell_values[0] - cell_values[1]) / 8.0
 
@@ -352,13 +381,13 @@ def reconstruct_output_field(
     return node_values
 
 
-def solve_problem_three(
-    internal_intervals: int = INTERNAL_INTERVALS,
-    time_step: float = TIME_STEP,
-    report_interval: float = REPORT_INTERVAL,
-    max_time: float = MAX_SIMULATION_TIME,
+def solve_question3(
+    internal_intervals: int = default_intervals,
+    time_step: float = default_time_step,
+    report_interval: float = default_report_interval,
+    max_time: float = max_simulation_time,
     boundary: DryingRoomBoundary | None = None,
-    critical_moisture: float = CRITICAL_MOISTURE,
+    critical_moisture: float = default_critical_moisture,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
     save_every = int(round(report_interval / time_step))
     n_steps = int(round(max_time / time_step))
@@ -370,19 +399,22 @@ def solve_problem_three(
         raise ValueError("最大时间必须是内部时间步长的整数倍。")
 
     if boundary is None:
-        boundary = read_drying_boundary(INPUT_FILE)
+        boundary = read_room_data(input_file)
     mesh = build_grid(internal_intervals)
     r_nodes = np.arange(
-        0.0, PELLET_RADIUS + 0.5 * OUTPUT_SPACING, OUTPUT_SPACING
+        0.0, pellet_radius + 0.5 * output_spacing, output_spacing
     )
-    temp = np.full(internal_intervals, INITIAL_TEMPERATURE)
-    water = np.full(internal_intervals, INITIAL_MOISTURE)
+    temp = np.full(internal_intervals, initial_temperature)
+    water = np.full(internal_intervals, initial_moisture)
 
+    # 先放几个空列表，等有结果需要保存时再往里面加。
+    # 还有一些用来判断和记账的变量，也先给个起始值，等进入循环以后再跟着每一步更新。
+    # 这些量开始时先各自占个位置
     time_log: list[float] = []
     water_log: list[np.ndarray] = []
     iter_log: list[int] = []
     t_prev = 0.0
-    c_max_prev = INITIAL_MOISTURE
+    c_max_prev = initial_moisture
     t_cross = None
     c_before = None
     c_after = None
@@ -394,6 +426,8 @@ def solve_problem_three(
     radially_nonincreasing_every_step = True
     checked_steps = 0
 
+    # 下面就开始往后推进时间了，一步算完再接下一步。
+    # 温度和含水率都要在这一步里更新好，之后再看看全域的含水率有没有达到要求。
     for step in range(1, n_steps + 1):
         t_now = step * time_step
         temp_air, water_air = boundary_value(
@@ -402,7 +436,7 @@ def solve_problem_three(
         temp_iter = temp.copy()
         water_iter = water.copy()
 
-        for iteration in range(1, MAX_ITERATIONS + 1):
+        for iteration in range(1, max_iterations + 1):
             temp_trial = advance_temperature(
                 temp,
                 water_iter,
@@ -419,12 +453,12 @@ def solve_problem_three(
                 time_step,
             )
             temp_new = (
-                RELAXATION_FACTOR * temp_trial
-                + (1.0 - RELAXATION_FACTOR) * temp_iter
+                relaxation_factor * temp_trial
+                + (1.0 - relaxation_factor) * temp_iter
             )
             water_new = (
-                RELAXATION_FACTOR * water_trial
-                + (1.0 - RELAXATION_FACTOR) * water_iter
+                relaxation_factor * water_trial
+                + (1.0 - relaxation_factor) * water_iter
             )
             err_t = np.max(
                 np.abs(temp_new - temp_iter)
@@ -436,7 +470,7 @@ def solve_problem_three(
             )
             temp_iter = temp_new
             water_iter = water_new
-            if max(err_t, err_c) < CONVERGENCE_TOL:
+            if max(err_t, err_c) < convergence_tol:
                 break
         else:
             raise RuntimeError(
@@ -452,14 +486,15 @@ def solve_problem_three(
         d_cell = moisture_diffusivity(water, temp)
         d_last = max(float(d_cell[-1]), 1.0e-30)
         hm_eff = 1.0 / (
-            1.0 / CONVECTIVE_MASS_COEFF
+            1.0 / convective_mass_coeff
             + 0.5 * mesh.spacing / d_last
         )
         flux_surf = (
-            PELLET_RADIUS
+            pellet_radius
             * hm_eff
             * (float(water[-1]) - water_air)
         )
+        # 此处懒得写了
         stock_next = float(np.dot(water, mesh.volumes))
         balance_err = abs(
             stock_next - stock_now + time_step * flux_surf
@@ -470,10 +505,10 @@ def solve_problem_three(
         outflow_sum += time_step * flux_surf
         stock_now = stock_next
 
-        c_nodes = reconstruct_output_field(
+        c_nodes = sample_field(
             water,
             d_cell,
-            CONVECTIVE_MASS_COEFF,
+            convective_mass_coeff,
             water_air,
             r_nodes,
             mesh,
@@ -497,7 +532,9 @@ def solve_problem_three(
             and c_max_prev >= critical_moisture
             and c_max_now < critical_moisture
         ):
-            t_cross = linear_threshold_crossing(
+            # 第一次走过阈值的时候，先把这个时间留下来。
+            # 后面还要继续等到合适的输出时刻，这个第一次跨过的记录就先放着，之后整理结果时再取
+            t_cross = threshold_time(
                 t_prev,
                 c_max_prev,
                 t_now,
@@ -507,6 +544,8 @@ def solve_problem_three(
             c_before = c_max_prev
             c_after = c_max_now
 
+        # 此处再看一下是不是到了该保存的时刻，到了就往下添一行。
+        # 这一行保存完以后，如果此时也已经达标，那这一趟便可停于此。
         if step % save_every == 0:
             time_log.append(t_now)
             water_log.append(c_nodes.copy())
@@ -521,6 +560,8 @@ def solve_problem_three(
         raise RuntimeError(f"{max_time / 3600:.1f} h 内未达到阈值。")
 
     water_field = np.asarray(water_log)
+    # 最后把达标时间、阈值前后的数和那些检查量放到一起。
+    # 这样返回的是一整份记录，后面要打印或者画图，就从里面挑需要的那一项。
     diagnostics = {
         "continuous_threshold_time_s": float(t_cross),
         "discrete_threshold_time_s": float(time_log[-1]),
@@ -529,9 +570,10 @@ def solve_problem_three(
         "center_controls_threshold": center_controls_every_step,
         "all_domain_checked_every_step": checked_steps == len(iter_log),
         "radially_nonincreasing_every_step": radially_nonincreasing_every_step,
-        "moisture_balance_relative_imbalance": relative_balance_imbalance(
+        "moisture_balance_relative_imbalance": balance_error(
             stock_init, stock_now, outflow_sum
         ),
+        # 好多东西，注释就不写了这里
         "maximum_step_balance_relative_residual": max_balance_err,
         "initial_moisture_integral": stock_init,
         "final_moisture_integral": stock_now,
@@ -556,12 +598,15 @@ def solve_problem_three(
     )
 
 
-def write_result_workbook(
+def write_results(
     times: np.ndarray,
     nodes: np.ndarray,
     moisture_field: np.ndarray,
 ) -> None:
-    book = load_workbook(OUTPUT_FILE)
+    # 先照着模板把表头放好，时间放在每一行的最前面。
+    # 这一时刻各个位置上的含水率再接到后面，整张表就有了。
+    # 时间和位置都已经有顺序，写的时候顺着接就好了，填完再统一保存。
+    book = load_workbook(output_file)
     sheet = book.worksheets[0]
     if sheet.max_row > 1:
         sheet.delete_rows(2, sheet.max_row - 1)
@@ -576,10 +621,11 @@ def write_result_workbook(
         for column, value in enumerate(moisture_field[row - 2], start=2):
             sheet.cell(row, column).value = float(value)
             sheet.cell(row, column).number_format = "0.0000"
-    book.save(OUTPUT_FILE)
+    book.save(output_file)
 
 
 def main() -> None:
+    # 先把主结果算出来并写好，接着把几项时间和检查记录打印一下。
     parser = argparse.ArgumentParser(description="问题三全域含水率达标时间求解")
     parser.add_argument(
         "--verification",
@@ -588,12 +634,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    baseline_boundary = read_drying_boundary(INPUT_FILE)
-    times, nodes, moisture_field, diagnostics = solve_problem_three(
+    baseline_boundary = read_room_data(input_file)
+    times, nodes, moisture_field, diagnostics = solve_question3(
         boundary=baseline_boundary
     )
-    write_result_workbook(times, nodes, moisture_field)
-    print(f"问题三重算完成：{OUTPUT_FILE}")
+    write_results(times, nodes, moisture_field)
+    print(f"问题三重算完成：{output_file}")
     print(
         f"连续阈值：{diagnostics['continuous_threshold_time_s'] / 3600:.4f} h；"
         f"首次 60 s 离散达标："
@@ -615,10 +661,16 @@ def main() -> None:
         f"最大 Picard 迭代次数：{diagnostics['maximum_picard_iterations']}"
     )
 
+    # 如果这次只算主结果，到这里就可以结束。
+    # 开了验证选项的话，下面还有几种情况要继续算，就让程序接着往下走。
+    # 如果走到了下面，那就让额外的几组也接着算完。
+    # 每跑完一种记下一种，最后再把这些记录放到一起看。
     if not args.verification:
         return
 
-    def case_record(name: str, label: str, case_diagnostics: dict) -> dict:
+    def record_case(name: str, label: str, case_diagnostics: dict) -> dict:
+        # 每种情况的诊断先复制一份出来，再把名字和小时单位的时间补进去。
+        # 补齐以后这一条记录就比较完整了，后面可以直接和别的情况放到一起。
         record = dict(case_diagnostics)
         record["name"] = name
         record["label"] = label
@@ -632,18 +684,18 @@ def main() -> None:
 
     report = {
         "scope": "离散方程诊断与情景敏感性；不是概率置信区间或真实质量守恒证明。",
-        "baseline": case_record(
+        "baseline": record_case(
             "last_1_hour_mean", "末 1 h 均值（基准）", diagnostics
         ),
         "boundary_scenarios": [],
         "numerical_refinement": [],
     }
 
-    for scenario in build_boundary_scenarios(INPUT_FILE):
+    for scenario in boundary_cases(input_file):
         print(f"复算边界情景：{scenario.label}")
-        _, _, _, case_diagnostics = solve_problem_three(boundary=scenario.boundary)
+        _, _, _, case_diagnostics = solve_question3(boundary=scenario.boundary)
         report["boundary_scenarios"].append(
-            case_record(scenario.name, scenario.label, case_diagnostics)
+            record_case(scenario.name, scenario.label, case_diagnostics)
         )
 
     refinement_cases = [
@@ -652,20 +704,21 @@ def main() -> None:
     ]
     for name, label, intervals, time_step in refinement_cases:
         print(f"复算数值加密：{label}")
-        _, _, _, case_diagnostics = solve_problem_three(
+        _, _, _, case_diagnostics = solve_question3(
             internal_intervals=intervals,
             time_step=time_step,
             boundary=baseline_boundary,
         )
         report["numerical_refinement"].append(
-            case_record(name, label, case_diagnostics)
+            record_case(name, label, case_diagnostics)
         )
 
-    with DIAGNOSTICS_FILE.open("w", encoding="utf-8") as stream:
+    with diagnostics_file.open("w", encoding="utf-8") as stream:
         json.dump(report, stream, ensure_ascii=False, indent=2)
         stream.write("\n")
-    print(f"验证诊断已保存：{DIAGNOSTICS_FILE}")
+    print(f"验证诊断已保存：{diagnostics_file}")
 
 
 if __name__ == "__main__":
     main()
+# 呃啊，写完了嘻嘻（）
