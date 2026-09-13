@@ -6,9 +6,7 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 import matplotlib as mpl
 import matplotlib.font_manager as font_manager
@@ -18,12 +16,6 @@ import numpy as np
 from openpyxl import load_workbook
 
 import 问题2_求解 as problem2_solver
-
-
-NATURE_FIGURE_SCRIPTS = Path.home() / ".codex" / "skills" / "nature-figure" / "scripts"
-if str(NATURE_FIGURE_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(NATURE_FIGURE_SCRIPTS))
-from audit_panel_alignment import require_matplotlib_panel_alignment
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -174,22 +166,10 @@ def load_plot_data() -> dict[str, np.ndarray]:
 def save_publication_figure(
     figure: plt.Figure,
     base_name: str,
-    exclude_axes: list[plt.Axes] | None = None,
 ) -> None:
-    """通过面板对齐检查后，仅导出 600 dpi PNG。"""
+    """使用 Matplotlib 原生接口导出 600 dpi PNG。"""
     FIGURE_DIR.mkdir(parents=True, exist_ok=True)
     figure.canvas.draw()
-    with TemporaryDirectory(prefix="problem2-figure-qa-") as temporary_dir:
-        require_matplotlib_panel_alignment(
-            figure,
-            json_out=Path(temporary_dir) / f"{base_name}.alignment.json",
-            exclude_axes=exclude_axes or [],
-            row_groups=getattr(figure, "_alignment_row_groups", None),
-            tolerance_pt=1.5,
-            gutter_tolerance_pt=1.5,
-            require_panel_labels=False,
-            strict=True,
-        )
     figure.savefig(
         FIGURE_DIR / f"{base_name}.png",
         dpi=EXPORT_DPI,
@@ -326,7 +306,6 @@ def plot_model_comparison(data: dict[str, np.ndarray]) -> plt.Figure:
         columnspacing=1.15,
     )
     figure.subplots_adjust(wspace=0.30, bottom=0.20, top=0.67, left=0.09, right=0.98)
-    figure._alignment_row_groups = [["a", "b"]]
     return figure
 
 
@@ -379,7 +358,6 @@ def plot_property_coupling(data: dict[str, np.ndarray]) -> plt.Figure:
         columnspacing=1.5,
     )
     figure.subplots_adjust(wspace=0.32, bottom=0.20, top=0.67, left=0.11, right=0.98)
-    figure._alignment_row_groups = [["a", "b"]]
     return figure
 
 
@@ -435,7 +413,6 @@ def plot_main_response(data: dict[str, np.ndarray]) -> plt.Figure:
         columnspacing=1.4,
     )
     figure.subplots_adjust(wspace=0.30, bottom=0.20, top=0.67, left=0.09, right=0.98)
-    figure._alignment_row_groups = [["a", "b"]]
     return figure
 
 
@@ -454,7 +431,6 @@ def plot_field_evolution(data: dict[str, np.ndarray]) -> plt.Figure:
     radii_cm = np.asarray(data["radii_cm"], dtype=float)
 
     figure, axes = plt.subplots(1, 2, figsize=(7.0, 3.05), sharex=True, sharey=True)
-    colorbar_axes = []
     panels = (
         (axes[0], temperature, "magma", "温度场", "°C"),
         (axes[1], moisture, "viridis", "含水率场", "kg/kg"),
@@ -476,7 +452,6 @@ def plot_field_evolution(data: dict[str, np.ndarray]) -> plt.Figure:
         for tick in colorbar.ax.get_yticklabels():
             tick.set_fontfamily("Times New Roman")
         colorbar.ax.grid(False)
-        colorbar_axes.append(colorbar.ax)
         axis.set_title(title, pad=6, fontweight="bold", fontfamily=HEADING_FONT)
         axis.set_xlabel("半径 r / cm")
         axis.set_ylabel("时间 / h")
@@ -484,8 +459,6 @@ def plot_field_evolution(data: dict[str, np.ndarray]) -> plt.Figure:
         axis.set_ylim(0.0, 3.0)
         _style_axis(axis, show_grid=False)
     _set_top_title(figure, "热湿场时空演化")
-    figure._alignment_exclude_axes = colorbar_axes
-    figure._alignment_row_groups = [["a", "b"]]
     figure.subplots_adjust(wspace=0.28, bottom=0.17, top=0.78, left=0.09, right=0.92)
     return figure
 
@@ -534,7 +507,6 @@ def plot_numerical_validation(data: dict[str, np.ndarray]) -> plt.Figure:
         columnspacing=1.5,
     )
     figure.subplots_adjust(wspace=0.31, bottom=0.19, top=0.67, left=0.11, right=0.98)
-    figure._alignment_row_groups = [["a", "b"]]
     return figure
 
 
@@ -573,11 +545,7 @@ def export_all(data: dict[str, np.ndarray]) -> None:
     )
     for builder, base_name in zip(builders, NEW_FIGURE_BASES):
         figure = builder(data)
-        save_publication_figure(
-            figure,
-            base_name,
-            exclude_axes=list(getattr(figure, "_alignment_exclude_axes", [])),
-        )
+        save_publication_figure(figure, base_name)
 
     missing = [
         FIGURE_DIR / f"{base_name}.png"

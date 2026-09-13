@@ -1,5 +1,5 @@
 {
-  "scope": "S 级论证：能量自洽性 + 全域最大值性质（只读，不修改任何求解代码）",
+  "scope": "能量自洽性 + 全域最大值性质",
   "argument_A_energy_consistency": {
     "heat_supply_upper_bound": {
       "1800": 329691.75000000006,
